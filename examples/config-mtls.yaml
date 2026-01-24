@@ -1,0 +1,15 @@
+server:
+  enabled: true
+  endpoint: "https://api.example.com/v1"
+  timeout: 30s
+  auth:
+    mode: "mtls"
+    mtls:
+      cert_path: "/path/to/client.crt"
+      key_path: "/path/to/client.key"
+      ca_path: "/path/to/ca.crt"
+
+buffer:
+  path: "~/.local/share/intentra/buffer"
+  max_size: 1000
+  flush_interval: 60s

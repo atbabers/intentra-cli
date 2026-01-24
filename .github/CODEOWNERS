@@ -1,0 +1,16 @@
+# Default owners for everything in the repo
+* @atbabers
+
+# Core modules
+/internal/hooks/ @atbabers
+/internal/config/ @atbabers
+/internal/api/ @atbabers
+
+# CLI commands
+/cmd/intentra/ @atbabers
+
+# Documentation
+*.md @atbabers
+
+# CI/CD
+/.github/ @atbabers

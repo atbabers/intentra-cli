@@ -1,0 +1,91 @@
+version: 2
+
+project_name: intentra
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: intentra
+    main: ./cmd/intentra
+    binary: intentra
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: atbabers
+    name: intentra-cli
+  draft: false
+  prerelease: auto
+  name_template: "{{.ProjectName}} v{{.Version}}"
+
+brews:
+  - repository:
+      owner: atbabers
+      name: homebrew-intentra
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://intentra.sh"
+    description: "Protect your AI coding intent - detect violations before they waste your budget"
+    license: "Apache-2.0"
+    skip_upload: auto
+    install: |
+      bin.install "intentra"
+    test: |
+      system "#{bin}/intentra", "--version"
+
+nfpms:
+  - id: packages
+    package_name: intentra
+    vendor: Intentra
+    homepage: https://intentra.sh
+    maintainer: Intentra <support@intentra.sh>
+    description: Protect your AI coding intent - detect violations before they waste your budget
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin

@@ -1,0 +1,15 @@
+server:
+  enabled: true
+  endpoint: "https://api.example.com/v1"
+  timeout: 30s
+  auth:
+    mode: "hmac"
+    hmac:
+      key_id: "your-key-id"
+      secret: "your-secret"
+      device_id: ""
+
+buffer:
+  path: "~/.local/share/intentra/buffer"
+  max_size: 1000
+  flush_interval: 60s

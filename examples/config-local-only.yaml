@@ -1,0 +1,7 @@
+server:
+  enabled: false
+
+buffer:
+  path: "~/.local/share/intentra/buffer"
+  max_size: 5000
+  flush_interval: 0s
