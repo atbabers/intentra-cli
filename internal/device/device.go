@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -159,10 +158,7 @@ func getFallbackID() (string, error) {
 		username = "unknown"
 	}
 
-	// Also include home directory path for additional uniqueness
-	home, _ := os.UserHomeDir()
-
-	return fmt.Sprintf("%s:%s:%s", hostname, username, filepath.Base(home)), nil
+	return fmt.Sprintf("%s:%s", hostname, username), nil
 }
 
 // VerifyDeviceID checks if a provided device ID matches this device.

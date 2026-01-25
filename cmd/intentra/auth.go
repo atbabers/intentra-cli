@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/atbabers/intentra-cli/internal/auth"
+	"github.com/atbabers/intentra-cli/internal/device"
 	"github.com/spf13/cobra"
 )
 
@@ -115,6 +116,14 @@ func runLogin(noBrowser bool) error {
 
 	fmt.Println()
 	fmt.Println("✓ Successfully logged in!")
+
+	if err := registerMachine(endpoint, creds.AccessToken); err != nil {
+		fmt.Printf("\nWarning: failed to register device: %v\n", err)
+		fmt.Println("You can retry by running 'intentra login' again.")
+	} else {
+		fmt.Println("✓ Device registered")
+	}
+
 	fmt.Println()
 	fmt.Println("You can now use Intentra with server sync enabled.")
 	fmt.Println("Run 'intentra status' to see your account info.")
@@ -282,4 +291,62 @@ func openBrowser(url string) error {
 	}
 
 	return cmd.Start()
+}
+
+func registerMachine(endpoint, accessToken string) error {
+	deviceID, err := device.GetDeviceID()
+	if err != nil {
+		return fmt.Errorf("failed to get device ID: %w", err)
+	}
+
+	metadata := device.GetMetadata()
+
+	payload := map[string]string{
+		"machine_id": deviceID,
+		"os":         metadata.Platform,
+		"hostname":   metadata.Hostname,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	url := endpoint + "/machines"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusCreated:
+		return nil
+	case http.StatusForbidden:
+		var errResp struct {
+			Error     string `json:"error"`
+			ErrorCode string `json:"error_code"`
+		}
+		if json.Unmarshal(body, &errResp) == nil {
+			switch errResp.ErrorCode {
+			case "MACHINE_LIMIT_REACHED":
+				return fmt.Errorf("device limit reached for your plan - upgrade at https://intentra.sh/billing")
+			case "MACHINE_ADMIN_REVOKED":
+				return fmt.Errorf("this device was revoked by an administrator - contact support")
+			}
+		}
+		return fmt.Errorf("registration forbidden: %s", string(body))
+	default:
+		return fmt.Errorf("registration failed (%d): %s", resp.StatusCode, string(body))
+	}
 }
