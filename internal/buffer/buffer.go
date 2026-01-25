@@ -191,12 +191,6 @@ func (b *Buffer) getPendingLocked(limit int) ([]*models.Scan, error) {
 	return scans, nil
 }
 
-func (b *Buffer) getPending(limit int) ([]*models.Scan, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.getPendingLocked(limit)
-}
-
 func (b *Buffer) markSyncedLocked(id string) error {
 	_, err := b.db.Exec("DELETE FROM scans WHERE id = ?", id)
 	return err
