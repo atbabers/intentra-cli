@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/atbabers/intentra-cli/internal/config"
 	"github.com/atbabers/intentra-cli/pkg/models"
@@ -134,7 +135,7 @@ func LoadScan(id string) (*models.Scan, error) {
 		return nil, err
 	}
 	relPath, err := filepath.Rel(absScansDir, absFilename)
-	if err != nil || relPath == ".." || len(relPath) > 2 && relPath[:3] == "../" {
+	if err != nil || strings.HasPrefix(relPath, "..") {
 		return nil, ErrInvalidScanID
 	}
 

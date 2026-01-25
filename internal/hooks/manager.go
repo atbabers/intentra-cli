@@ -185,12 +185,15 @@ func checkStatus(tool Tool) (bool, string, error) {
 // --- Cursor ---
 
 func installCursor(handlerPath string) error {
-	dir, err := getCursorHooksDir("")
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get home directory: %w", err)
 	}
-	home, _ := os.UserHomeDir()
-	dir, _ = getCursorHooksDir(home)
+
+	dir, err := getCursorHooksDir(home)
+	if err != nil {
+		return fmt.Errorf("failed to get hooks directory: %w", err)
+	}
 
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("failed to create hooks directory: %w", err)

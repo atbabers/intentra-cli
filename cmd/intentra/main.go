@@ -49,17 +49,18 @@ tracks usage metrics, and optionally syncs data to a central server.`,
 	rootCmd.AddCommand(newConfigCmd())
 	rootCmd.AddCommand(newSyncCmd())
 
-	// Hidden hook command (called by AI tools via installed hooks).
 	var hookTool string
+	var hookEvent string
 	hookCmd := &cobra.Command{
 		Use:    "hook",
 		Short:  "Process a hook event (internal use)",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return hooks.RunHookHandlerWithTool(hookTool)
+			return hooks.RunHookHandlerWithToolAndEvent(hookTool, hookEvent)
 		},
 	}
 	hookCmd.Flags().StringVar(&hookTool, "tool", "", "AI tool (cursor, claude)")
+	hookCmd.Flags().StringVar(&hookEvent, "event", "", "Hook event type")
 	rootCmd.AddCommand(hookCmd)
 
 	if err := rootCmd.Execute(); err != nil {

@@ -13,12 +13,15 @@ import (
 )
 
 // modelPricing contains pricing per 1K tokens for various models.
+// Keys are prefixes that match model strings (e.g., "claude-3-5-sonnet" matches "claude-3-5-sonnet-latest").
 var modelPricing = map[string]float64{
+	"claude-sonnet-4":   0.003,
 	"claude-3-5-sonnet": 0.003,
 	"claude-3-5-haiku":  0.00025,
 	"claude-3-opus":     0.015,
-	"gpt-4":             0.03,
+	"gpt-4o":            0.005,
 	"gpt-4-turbo":       0.01,
+	"gpt-4":             0.03,
 	"gpt-3.5-turbo":     0.0005,
 }
 
@@ -98,11 +101,12 @@ func getModel(events []models.Event) string {
 }
 
 func estimateCost(tokens int, model string) float64 {
-	price, ok := modelPricing[model]
-	if !ok {
-		price = 0.003 // default
+	for prefix, price := range modelPricing {
+		if len(model) >= len(prefix) && model[:len(prefix)] == prefix {
+			return float64(tokens) / 1000.0 * price
+		}
 	}
-	return float64(tokens) / 1000.0 * price
+	return float64(tokens) / 1000.0 * 0.003
 }
 
 // CreateScanFromEvent creates a scan from a single event for immediate sync.
