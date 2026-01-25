@@ -48,6 +48,9 @@ tracks usage metrics, and optionally syncs data to a central server.`,
 	rootCmd.AddCommand(newScanCmd())
 	rootCmd.AddCommand(newConfigCmd())
 	rootCmd.AddCommand(newSyncCmd())
+	rootCmd.AddCommand(newLoginCmd())
+	rootCmd.AddCommand(newLogoutCmd())
+	rootCmd.AddCommand(newStatusCmd())
 
 	var hookTool string
 	var hookEvent string
@@ -136,14 +139,6 @@ func newSyncCmd() *cobra.Command {
 Requires server sync to be enabled in config.`,
 	}
 
-	// sync now
-	nowCmd := &cobra.Command{
-		Use:   "now",
-		Short: "Force sync all pending scans",
-		RunE:  runSyncNow,
-	}
-
-	// sync status
 	statusCmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show sync status",
@@ -157,7 +152,6 @@ Requires server sync to be enabled in config.`,
 			if cfg.Server.Enabled {
 				fmt.Printf("  Server: %s\n", cfg.Server.Endpoint)
 				fmt.Printf("  Buffer: %s\n", cfg.Buffer.Path)
-				// TODO: Show pending count from buffer
 			} else {
 				fmt.Println("  Server sync: disabled")
 				fmt.Println("  Running in local-only mode")
@@ -166,7 +160,7 @@ Requires server sync to be enabled in config.`,
 		},
 	}
 
-	cmd.AddCommand(nowCmd, statusCmd)
+	cmd.AddCommand(newSyncNowCmd(), statusCmd)
 	return cmd
 }
 

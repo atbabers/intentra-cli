@@ -117,7 +117,6 @@ func LoadScans() ([]models.Scan, error) {
 
 // LoadScan reads a single scan by ID.
 func LoadScan(id string) (*models.Scan, error) {
-	// Validate scan ID to prevent path traversal attacks (e.g., "../../../etc/passwd")
 	if err := validateScanID(id); err != nil {
 		return nil, err
 	}
@@ -125,7 +124,6 @@ func LoadScan(id string) (*models.Scan, error) {
 	scansDir := config.GetScansDir()
 	filename := filepath.Join(scansDir, id+".json")
 
-	// Additional safety: verify the resolved path is within scansDir
 	absFilename, err := filepath.Abs(filename)
 	if err != nil {
 		return nil, err
@@ -150,4 +148,34 @@ func LoadScan(id string) (*models.Scan, error) {
 	}
 
 	return &scan, nil
+}
+
+// DeleteScan removes a scan file by ID.
+func DeleteScan(id string) error {
+	if err := validateScanID(id); err != nil {
+		return err
+	}
+
+	scansDir := config.GetScansDir()
+	filename := filepath.Join(scansDir, id+".json")
+
+	absFilename, err := filepath.Abs(filename)
+	if err != nil {
+		return err
+	}
+	absScansDir, err := filepath.Abs(scansDir)
+	if err != nil {
+		return err
+	}
+	relPath, err := filepath.Rel(absScansDir, absFilename)
+	if err != nil || strings.HasPrefix(relPath, "..") {
+		return ErrInvalidScanID
+	}
+
+	err = os.Remove(filename)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	return nil
 }

@@ -42,6 +42,11 @@ func GetEvidenceDir() string {
 	return filepath.Join(GetDataDir(), "evidence")
 }
 
+// GetCredentialsFile returns the path to the credentials file.
+func GetCredentialsFile() string {
+	return filepath.Join(GetConfigDir(), "credentials.json")
+}
+
 // EnsureDirectories creates all required directories.
 func EnsureDirectories() error {
 	dirs := []string{

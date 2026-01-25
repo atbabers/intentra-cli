@@ -166,7 +166,7 @@ print_success() {
     echo ""
     echo "Get started:"
     echo "  intentra --help"
-    echo "  intentra auth login"
+    echo "  intentra login"
     echo "  intentra install cursor"
     echo ""
     echo "Documentation: https://intentra.sh/docs"

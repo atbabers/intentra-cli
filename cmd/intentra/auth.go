@@ -1,0 +1,285 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os/exec"
+	"runtime"
+	"time"
+
+	"github.com/atbabers/intentra-cli/internal/auth"
+	"github.com/spf13/cobra"
+)
+
+const (
+	defaultAPIEndpoint = "https://api.intentra.sh"
+)
+
+func newLoginCmd() *cobra.Command {
+	var noBrowser bool
+
+	cmd := &cobra.Command{
+		Use:   "login",
+		Short: "Authenticate with Intentra",
+		Long: `Authenticate with your Intentra account using device authorization flow.
+
+This will:
+1. Generate a device code
+2. Open your browser to authorize (or display URL if --no-browser)
+3. Poll for authorization and save credentials`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runLogin(noBrowser)
+		},
+	}
+
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Print URL instead of opening browser")
+
+	return cmd
+}
+
+func newLogoutCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "logout",
+		Short: "Log out of Intentra",
+		Long:  `Remove stored credentials and log out of Intentra.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runLogout()
+		},
+	}
+}
+
+func newStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show authentication status",
+		Long:  `Display current authentication status and user information.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runStatus()
+		},
+	}
+}
+
+func runLogin(noBrowser bool) error {
+	creds := auth.GetValidCredentials()
+	if creds != nil {
+		fmt.Println("You are already logged in.")
+		fmt.Println("Run 'intentra logout' first to log in with a different account.")
+		return nil
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	endpoint := cfg.Server.Endpoint
+	if endpoint == "" {
+		endpoint = defaultAPIEndpoint
+	}
+
+	fmt.Println("Initiating device authorization...")
+
+	deviceResp, err := requestDeviceCode(endpoint)
+	if err != nil {
+		return fmt.Errorf("failed to initiate login: %w", err)
+	}
+
+	fmt.Println()
+	fmt.Printf("Please visit: %s\n", deviceResp.VerificationURI)
+	fmt.Printf("Enter code: %s\n", deviceResp.UserCode)
+	fmt.Println()
+
+	if !noBrowser && deviceResp.VerificationURIComplete != "" {
+		if err := openBrowser(deviceResp.VerificationURIComplete); err != nil {
+			fmt.Println("Could not open browser automatically.")
+			fmt.Println("Please visit the URL above manually.")
+		} else {
+			fmt.Println("Browser opened. Complete authorization in your browser.")
+		}
+	}
+
+	fmt.Println("Waiting for authorization...")
+
+	tokenResp, err := pollForToken(endpoint, deviceResp)
+	if err != nil {
+		return fmt.Errorf("authorization failed: %w", err)
+	}
+
+	creds = auth.CredentialsFromTokenResponse(tokenResp)
+	if err := auth.SaveCredentials(creds); err != nil {
+		return fmt.Errorf("failed to save credentials: %w", err)
+	}
+
+	fmt.Println()
+	fmt.Println("✓ Successfully logged in!")
+	fmt.Println()
+	fmt.Println("You can now use Intentra with server sync enabled.")
+	fmt.Println("Run 'intentra status' to see your account info.")
+
+	return nil
+}
+
+func runLogout() error {
+	creds := auth.GetValidCredentials()
+	if creds == nil {
+		fmt.Println("You are not logged in.")
+		return nil
+	}
+
+	if err := auth.DeleteCredentials(); err != nil {
+		return fmt.Errorf("failed to logout: %w", err)
+	}
+
+	fmt.Println("✓ Successfully logged out.")
+	return nil
+}
+
+func runStatus() error {
+	creds, err := auth.LoadCredentials()
+	if err != nil {
+		return fmt.Errorf("failed to load credentials: %w", err)
+	}
+
+	if creds == nil {
+		fmt.Println("Status: Not logged in")
+		fmt.Println()
+		fmt.Println("Run 'intentra login' to authenticate.")
+		return nil
+	}
+
+	if creds.IsExpired() {
+		fmt.Println("Status: Session expired")
+		fmt.Println()
+		fmt.Println("Run 'intentra login' to re-authenticate.")
+		return nil
+	}
+
+	fmt.Println("Status: Logged in")
+	fmt.Println()
+
+	if creds.Email != "" {
+		fmt.Printf("Email: %s\n", creds.Email)
+	}
+	if creds.UserID != "" {
+		fmt.Printf("User ID: %s\n", creds.UserID)
+	}
+
+	remaining := time.Until(creds.ExpiresAt)
+	if remaining > 0 {
+		if remaining > time.Hour {
+			fmt.Printf("Token expires: in %d hours\n", int(remaining.Hours()))
+		} else {
+			fmt.Printf("Token expires: in %d minutes\n", int(remaining.Minutes()))
+		}
+	}
+
+	return nil
+}
+
+func requestDeviceCode(endpoint string) (*auth.DeviceCodeResponse, error) {
+	url := endpoint + "/oauth/device/code"
+
+	resp, err := http.Post(url, "application/json", nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server error: %s", string(body))
+	}
+
+	var deviceResp auth.DeviceCodeResponse
+	if err := json.Unmarshal(body, &deviceResp); err != nil {
+		return nil, fmt.Errorf("invalid response: %w", err)
+	}
+
+	return &deviceResp, nil
+}
+
+func pollForToken(endpoint string, deviceResp *auth.DeviceCodeResponse) (*auth.TokenResponse, error) {
+	url := endpoint + "/oauth/token"
+	interval := time.Duration(deviceResp.Interval) * time.Second
+	if interval < time.Second {
+		interval = 5 * time.Second
+	}
+	timeout := time.After(time.Duration(deviceResp.ExpiresIn) * time.Second)
+
+	payload := map[string]string{
+		"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
+		"device_code": deviceResp.DeviceCode,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	for {
+		select {
+		case <-timeout:
+			return nil, fmt.Errorf("authorization timed out - device code expired")
+		default:
+		}
+
+		resp, err := http.Post(url, "application/json", bytes.NewReader(payloadBytes))
+		if err != nil {
+			time.Sleep(interval)
+			continue
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		var tokenResp auth.TokenResponse
+		if err := json.Unmarshal(body, &tokenResp); err != nil {
+			time.Sleep(interval)
+			continue
+		}
+
+		if tokenResp.AccessToken != "" {
+			return &tokenResp, nil
+		}
+
+		switch tokenResp.Error {
+		case "authorization_pending":
+			time.Sleep(interval)
+			continue
+		case "slow_down":
+			interval += 5 * time.Second
+			time.Sleep(interval)
+			continue
+		case "expired_token":
+			return nil, fmt.Errorf("device code expired - please try again")
+		case "access_denied":
+			return nil, fmt.Errorf("authorization denied by user")
+		default:
+			if tokenResp.Error != "" {
+				return nil, fmt.Errorf("%s: %s", tokenResp.Error, tokenResp.ErrorDesc)
+			}
+			time.Sleep(interval)
+			continue
+		}
+	}
+}
+
+func openBrowser(url string) error {
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		cmd = exec.Command("xdg-open", url)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", url)
+	default:
+		return fmt.Errorf("unsupported platform")
+	}
+
+	return cmd.Start()
+}

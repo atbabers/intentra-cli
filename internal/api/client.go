@@ -19,10 +19,30 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/atbabers/intentra-cli/internal/auth"
 	"github.com/atbabers/intentra-cli/internal/config"
 	"github.com/atbabers/intentra-cli/internal/device"
 	"github.com/atbabers/intentra-cli/pkg/models"
 )
+
+// ScansResponse represents the response from GET /scans.
+type ScansResponse struct {
+	Scans   []models.Scan `json:"scans"`
+	Summary ScansSummary  `json:"summary"`
+}
+
+// ScansSummary contains aggregated scan statistics.
+type ScansSummary struct {
+	TotalScans          int     `json:"total_scans"`
+	TotalCost           float64 `json:"total_cost"`
+	ScansWithViolations int     `json:"scans_with_violations"`
+}
+
+// ScanDetailResponse represents the response from GET /scans/{id}.
+type ScanDetailResponse struct {
+	Scan             models.Scan       `json:"scan"`
+	ViolationDetails map[string]string `json:"violation_details,omitempty"`
+}
 
 // Client handles communication with the Intentra API.
 type Client struct {
@@ -295,5 +315,122 @@ func (c *Client) addAPIKeyAuth(req *http.Request, body []byte) error {
 	setAuthHeaders(req, keyID, timestamp, nonce, signature)
 
 	return nil
+}
+
+// addJWTAuth adds JWT Bearer token authentication from stored credentials.
+func (c *Client) addJWTAuth(req *http.Request) error {
+	creds := auth.GetValidCredentials()
+	if creds == nil {
+		return fmt.Errorf("not authenticated - run 'intentra login' first")
+	}
+
+	req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
+
+	deviceID, err := c.getDeviceID()
+	if err != nil {
+		return fmt.Errorf("failed to get device ID: %w", err)
+	}
+	req.Header.Set("X-Machine-ID", deviceID)
+
+	return nil
+}
+
+// GetScans retrieves scans from the API.
+func (c *Client) GetScans(days, limit int) (*ScansResponse, error) {
+	if days <= 0 {
+		days = 30
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+
+	url := fmt.Sprintf("%s/scans?days=%d&limit=%d", c.cfg.Server.Endpoint, days, limit)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("User-Agent", "intentra-cli/1.0")
+
+	if err := c.addJWTAuth(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("authentication failed - run 'intentra login' to re-authenticate")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result ScansResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// GetScan retrieves a single scan by ID from the API.
+func (c *Client) GetScan(scanID string) (*ScanDetailResponse, error) {
+	if scanID == "" {
+		return nil, fmt.Errorf("scan ID is required")
+	}
+
+	url := fmt.Sprintf("%s/scans/%s", c.cfg.Server.Endpoint, scanID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("User-Agent", "intentra-cli/1.0")
+
+	if err := c.addJWTAuth(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("authentication failed - run 'intentra login' to re-authenticate")
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("scan not found: %s", scanID)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result ScanDetailResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &result, nil
 }
 

@@ -132,7 +132,7 @@ function Install-Intentra {
         Write-Host ""
         Write-Host "Get started:"
         Write-Host "  intentra --help"
-        Write-Host "  intentra auth login"
+        Write-Host "  intentra login"
         Write-Host "  intentra install cursor"
         Write-Host ""
         Write-Host "Documentation: https://intentra.sh/docs"
