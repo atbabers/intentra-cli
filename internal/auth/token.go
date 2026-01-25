@@ -58,7 +58,7 @@ func (c *Credentials) IsValid() bool {
 // LoadCredentials loads credentials from the credentials file.
 func LoadCredentials() (*Credentials, error) {
 	credFile := config.GetCredentialsFile()
-	
+
 	data, err := os.ReadFile(credFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -66,12 +66,12 @@ func LoadCredentials() (*Credentials, error) {
 		}
 		return nil, fmt.Errorf("failed to read credentials: %w", err)
 	}
-	
+
 	var creds Credentials
 	if err := json.Unmarshal(data, &creds); err != nil {
 		return nil, fmt.Errorf("failed to parse credentials: %w", err)
 	}
-	
+
 	return &creds, nil
 }
 
@@ -80,36 +80,36 @@ func SaveCredentials(creds *Credentials) error {
 	if err := config.EnsureDirectories(); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
-	
+
 	data, err := json.MarshalIndent(creds, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal credentials: %w", err)
 	}
-	
+
 	credFile := config.GetCredentialsFile()
 	if err := os.WriteFile(credFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to write credentials: %w", err)
 	}
-	
+
 	return nil
 }
 
 // DeleteCredentials removes the credentials file.
 func DeleteCredentials() error {
 	credFile := config.GetCredentialsFile()
-	
+
 	err := os.Remove(credFile)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to delete credentials: %w", err)
 	}
-	
+
 	return nil
 }
 
 // CredentialsFromTokenResponse creates Credentials from a TokenResponse.
 func CredentialsFromTokenResponse(resp *TokenResponse) *Credentials {
 	expiresAt := time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
-	
+
 	return &Credentials{
 		AccessToken:  resp.AccessToken,
 		RefreshToken: resp.RefreshToken,
@@ -125,10 +125,10 @@ func GetValidCredentials() *Credentials {
 	if err != nil || creds == nil {
 		return nil
 	}
-	
+
 	if !creds.IsValid() {
 		return nil
 	}
-	
+
 	return creds
 }

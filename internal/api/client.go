@@ -433,4 +433,3 @@ func (c *Client) GetScan(scanID string) (*ScanDetailResponse, error) {
 
 	return &result, nil
 }
-

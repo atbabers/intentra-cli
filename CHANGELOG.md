@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scan show` now queries API when server mode enabled
 - `sync now` deletes local files after successful sync (unless `--keep-local`)
 - Simplified auth commands to top-level (no `auth` subcommand)
+- Updated README to emphasize local-first mode with optional intentra.sh server sync
 
 ### Fixed
 - Scans no longer persist locally after successful server sync

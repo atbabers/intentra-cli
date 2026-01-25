@@ -2,6 +2,8 @@
 
 Open-source monitoring tool for AI coding assistants. Captures events from Cursor, Claude Code, and Gemini CLI, normalizes them into a unified schema, and aggregates them into scans.
 
+**Local-first by default** - all data stays on your machine. For advanced observability and team features, connect to [intentra.sh](https://intentra.sh).
+
 ## Installation
 
 ```bash
@@ -28,6 +30,8 @@ intentra hooks status
 intentra scan list
 ```
 
+All scans are stored locally at `~/.local/share/intentra/scans/`.
+
 ## Commands
 
 | Command | Description |
@@ -37,6 +41,7 @@ intentra scan list
 | `intentra hooks status` | Check hook installation status |
 | `intentra scan list` | List captured scans |
 | `intentra scan show <id>` | Show scan details |
+| `intentra scan today` | List today's scans |
 | `intentra scan aggregate` | Process events into scans |
 | `intentra sync now` | Sync scans to server |
 | `intentra sync status` | Show sync status |
@@ -55,6 +60,17 @@ intentra scan list
 ## Configuration
 
 Configuration file location: `~/.config/intentra/config.yaml`
+
+### Local-Only Mode (Default)
+
+```yaml
+server:
+  enabled: false
+```
+
+### Server Mode (Advanced Observability)
+
+Connect to [intentra.sh](https://intentra.sh) for dashboards, team analytics, and centralized monitoring:
 
 ```yaml
 server:
