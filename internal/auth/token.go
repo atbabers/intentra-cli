@@ -4,13 +4,18 @@
 package auth
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/atbabers/intentra-cli/internal/config"
 )
+
+const defaultAPIEndpoint = "https://api.intentra.sh"
 
 // Credentials represents stored authentication credentials.
 type Credentials struct {
@@ -119,16 +124,86 @@ func CredentialsFromTokenResponse(resp *TokenResponse) *Credentials {
 	}
 }
 
-// GetValidCredentials loads credentials and returns them if valid, otherwise returns nil.
+// GetValidCredentials loads credentials, refreshes if needed, and returns them if valid.
 func GetValidCredentials() *Credentials {
 	creds, err := LoadCredentials()
 	if err != nil || creds == nil {
 		return nil
 	}
 
-	if !creds.IsValid() {
+	if creds.IsValid() {
+		return creds
+	}
+
+	if creds.RefreshToken == "" {
 		return nil
 	}
 
-	return creds
+	refreshed, err := RefreshCredentials(creds)
+	if err != nil {
+		return nil
+	}
+
+	return refreshed
+}
+
+// RefreshCredentials uses the refresh token to obtain new credentials.
+func RefreshCredentials(creds *Credentials) (*Credentials, error) {
+	if creds.RefreshToken == "" {
+		return nil, fmt.Errorf("no refresh token available")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	endpoint := cfg.Server.Endpoint
+	if endpoint == "" {
+		endpoint = defaultAPIEndpoint
+	}
+
+	url := endpoint + "/oauth/refresh"
+	payload := map[string]string{
+		"refresh_token": creds.RefreshToken,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	resp, err := http.Post(url, "application/json", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return nil, fmt.Errorf("refresh request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("refresh failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp TokenResponse
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if tokenResp.AccessToken == "" {
+		return nil, fmt.Errorf("no access token in response")
+	}
+
+	newCreds := CredentialsFromTokenResponse(&tokenResp)
+	newCreds.UserID = creds.UserID
+	newCreds.Email = creds.Email
+
+	if newCreds.RefreshToken == "" {
+		newCreds.RefreshToken = creds.RefreshToken
+	}
+
+	if err := SaveCredentials(newCreds); err != nil {
+		return nil, fmt.Errorf("failed to save refreshed credentials: %w", err)
+	}
+
+	return newCreds, nil
 }

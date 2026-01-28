@@ -1,41 +1,388 @@
 // Package hooks manages integration with AI coding tools by installing and
-// handling event hooks. It supports Cursor, Claude Code, and Gemini CLI,
-// providing real-time event capture and forwarding to the Intentra API.
+// handling event hooks. It supports Cursor, Claude Code, Gemini CLI, GitHub
+// Copilot, and Windsurf Cascade, providing real-time event capture and
+// forwarding to the Intentra API.
 package hooks
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/atbabers/intentra-cli/internal/api"
 	"github.com/atbabers/intentra-cli/internal/config"
 	"github.com/atbabers/intentra-cli/internal/device"
-	"github.com/atbabers/intentra-cli/internal/scanner"
 	"github.com/atbabers/intentra-cli/pkg/models"
 )
+
+const maxBufferAge = 30 * time.Minute
+
+type bufferedEvent struct {
+	Event    *models.Event  `json:"event"`
+	RawEvent map[string]any `json:"raw_event"`
+}
+
+func getBufferPath(sessionKey string) string {
+	hash := sha256.Sum256([]byte(sessionKey))
+	filename := "intentra_buffer_" + hex.EncodeToString(hash[:8]) + ".jsonl"
+	return filepath.Join(os.TempDir(), filename)
+}
+
+func appendToBuffer(sessionKey string, event *models.Event, rawEvent map[string]any) error {
+	bufferPath := getBufferPath(sessionKey)
+	f, err := os.OpenFile(bufferPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to open buffer: %w", err)
+	}
+	defer f.Close()
+
+	entry := bufferedEvent{Event: event, RawEvent: rawEvent}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		return fmt.Errorf("failed to write to buffer: %w", err)
+	}
+
+	return nil
+}
+
+func readAndClearBuffer(sessionKey string) ([]bufferedEvent, error) {
+	bufferPath := getBufferPath(sessionKey)
+
+	data, err := os.ReadFile(bufferPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read buffer: %w", err)
+	}
+
+	os.Remove(bufferPath)
+
+	var events []bufferedEvent
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var entry bufferedEvent
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		events = append(events, entry)
+	}
+
+	return events, nil
+}
+
+func cleanupStaleBuffers() {
+	pattern := filepath.Join(os.TempDir(), "intentra_buffer_*.jsonl")
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		return
+	}
+
+	cutoff := time.Now().Add(-maxBufferAge)
+	for _, f := range files {
+		info, err := os.Stat(f)
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			os.Remove(f)
+		}
+	}
+}
+
+func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
+	if len(events) == 0 {
+		return nil
+	}
+
+	first := events[0]
+	last := events[len(events)-1]
+
+	scan := &models.Scan{
+		Tool:           tool,
+		ConversationID: first.Event.ConversationID,
+		Status:         models.ScanStatusPending,
+		StartTime:      first.Event.Timestamp,
+		EndTime:        last.Event.Timestamp,
+		DeviceID:       first.Event.DeviceID,
+	}
+
+	if scan.ConversationID == "" && first.Event.SessionID != "" {
+		scan.ConversationID = first.Event.SessionID
+	}
+
+	hash := sha256.Sum256([]byte(scan.ConversationID + scan.StartTime.String()))
+	scan.ID = "scan_" + hex.EncodeToString(hash[:])[:12]
+
+	scan.Source = &models.ScanSource{
+		Tool:      tool,
+		SessionID: first.Event.SessionID,
+	}
+
+	for _, entry := range events {
+		ev := entry.Event
+		scan.Events = append(scan.Events, *ev)
+
+		rawEvent := entry.RawEvent
+		if rawEvent == nil {
+			rawEvent = make(map[string]any)
+		}
+		rawEvent["normalized_type"] = ev.NormalizedType
+		scan.RawEvents = append(scan.RawEvents, rawEvent)
+
+		scan.InputTokens += ev.InputTokens
+		scan.OutputTokens += ev.OutputTokens
+		scan.ThinkingTokens += ev.ThinkingTokens
+
+		normalizedType := NormalizedEventType(ev.NormalizedType)
+		if IsLLMCallEvent(normalizedType) {
+			scan.LLMCalls++
+		}
+		if IsToolCallEvent(normalizedType) {
+			scan.ToolCalls++
+		}
+	}
+
+	scan.TotalTokens = scan.InputTokens + scan.OutputTokens + scan.ThinkingTokens
+
+	model := "claude-3-5-sonnet"
+	for _, entry := range events {
+		if entry.Event.Model != "" {
+			model = entry.Event.Model
+			break
+		}
+	}
+
+	modelPricing := map[string]float64{
+		"claude-sonnet-4":   0.003,
+		"claude-3-5-sonnet": 0.003,
+		"claude-3-5-haiku":  0.00025,
+		"claude-3-opus":     0.015,
+		"gemini":            0.0001,
+		"gpt-4o":            0.005,
+		"gpt-4":             0.03,
+		"gpt-3.5":           0.0005,
+		"o1":                0.015,
+	}
+	price := 0.003
+	if tool == "copilot" {
+		price = 0.005
+	} else if tool == "windsurf" {
+		price = 0.003
+	}
+	for prefix, p := range modelPricing {
+		if strings.HasPrefix(model, prefix) {
+			price = p
+			break
+		}
+	}
+	scan.EstimatedCost = float64(scan.TotalTokens) / 1000.0 * price
+
+	return scan
+}
+
+func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, map[string]any, NormalizedEventType, error) {
+	var raw map[string]any
+	if err := json.Unmarshal(rawJSON, &raw); err != nil {
+		return nil, nil, EventUnknown, fmt.Errorf("failed to parse raw JSON: %w", err)
+	}
+
+	normalizer := GetNormalizer(tool)
+	normalizedType := normalizer.NormalizeEventType(eventType)
+
+	event := &models.Event{
+		Tool:           tool,
+		HookType:       models.HookType(eventType),
+		NormalizedType: string(normalizedType),
+	}
+
+	if v, ok := raw["conversation_id"].(string); ok {
+		event.ConversationID = v
+	}
+	if v, ok := raw["session_id"].(string); ok {
+		event.SessionID = v
+	}
+	if v, ok := raw["generation_id"].(string); ok && event.ConversationID == "" {
+		event.ConversationID = v
+	}
+
+	if v, ok := raw["trajectory_id"].(string); ok && event.ConversationID == "" {
+		event.ConversationID = v
+	}
+	if v, ok := raw["execution_id"].(string); ok && event.SessionID == "" {
+		event.SessionID = v
+	}
+
+	if v, ok := raw["hook_event_name"].(string); ok && event.HookType == "" {
+		event.HookType = models.HookType(v)
+	}
+	if v, ok := raw["agent_action_name"].(string); ok && event.HookType == "" {
+		event.HookType = models.HookType(v)
+	}
+
+	if v, ok := raw["model"].(string); ok {
+		event.Model = v
+	}
+	if v, ok := raw["user_email"].(string); ok {
+		event.UserEmail = v
+	}
+
+	if v, ok := raw["tool_name"].(string); ok {
+		event.ToolName = v
+	}
+	if v, ok := raw["toolName"].(string); ok && event.ToolName == "" {
+		event.ToolName = v
+	}
+
+	if toolInput, ok := raw["tool_input"].(map[string]any); ok {
+		if inputJSON, err := json.Marshal(toolInput); err == nil {
+			event.ToolInput = inputJSON
+		}
+		if cmd, ok := toolInput["command"].(string); ok {
+			event.Command = cmd
+		}
+		if fp, ok := toolInput["file_path"].(string); ok {
+			event.FilePath = fp
+		}
+	}
+
+	if toolArgs, ok := raw["toolArgs"].(string); ok && event.ToolInput == nil {
+		event.ToolInput = json.RawMessage(toolArgs)
+	}
+
+	if toolOutput, ok := raw["tool_output"].(string); ok {
+		event.ToolOutput = json.RawMessage(`"` + toolOutput + `"`)
+	} else if toolOutput, ok := raw["tool_output"].(map[string]any); ok {
+		if outputJSON, err := json.Marshal(toolOutput); err == nil {
+			event.ToolOutput = outputJSON
+		}
+	}
+	if toolResp, ok := raw["tool_response"].(map[string]any); ok {
+		if respJSON, err := json.Marshal(toolResp); err == nil {
+			event.ToolOutput = respJSON
+		}
+	}
+	if toolResult, ok := raw["toolResult"].(map[string]any); ok {
+		if resultJSON, err := json.Marshal(toolResult); err == nil {
+			event.ToolOutput = resultJSON
+		}
+	}
+
+	if toolInfo, ok := raw["tool_info"].(map[string]any); ok {
+		if fp, ok := toolInfo["file_path"].(string); ok {
+			event.FilePath = fp
+		}
+		if cmd, ok := toolInfo["command_line"].(string); ok {
+			event.Command = cmd
+		}
+		if prompt, ok := toolInfo["user_prompt"].(string); ok {
+			event.Prompt = prompt
+		}
+		if resp, ok := toolInfo["response"].(string); ok {
+			event.Response = resp
+		}
+		if toolInfoJSON, err := json.Marshal(toolInfo); err == nil {
+			if event.ToolInput == nil {
+				event.ToolInput = toolInfoJSON
+			}
+		}
+	}
+
+	if v, ok := raw["command"].(string); ok && event.Command == "" {
+		event.Command = v
+	}
+	if v, ok := raw["output"].(string); ok {
+		event.CommandOutput = v
+	}
+
+	if v, ok := raw["prompt"].(string); ok {
+		event.Prompt = v
+	}
+	if v, ok := raw["initialPrompt"].(string); ok && event.Prompt == "" {
+		event.Prompt = v
+	}
+	if v, ok := raw["response"].(string); ok {
+		event.Response = v
+	}
+	if v, ok := raw["thought"].(string); ok {
+		event.Thought = v
+	}
+	if v, ok := raw["text"].(string); ok {
+		if event.Response == "" {
+			event.Response = v
+		}
+	}
+
+	if v, ok := raw["file_path"].(string); ok && event.FilePath == "" {
+		event.FilePath = v
+	}
+	if v, ok := raw["cwd"].(string); ok && event.FilePath == "" {
+		event.FilePath = v
+	}
+
+	if v, ok := raw["duration"].(float64); ok {
+		event.DurationMs = int(v)
+	}
+	if v, ok := raw["duration_ms"].(float64); ok {
+		event.DurationMs = int(v)
+	}
+
+	if v, ok := raw["input_tokens"].(float64); ok {
+		event.InputTokens = int(v)
+	}
+	if v, ok := raw["output_tokens"].(float64); ok {
+		event.OutputTokens = int(v)
+	}
+
+	if errObj, ok := raw["error"].(map[string]any); ok {
+		if msg, ok := errObj["message"].(string); ok {
+			event.Response = "Error: " + msg
+		}
+	}
+
+	return event, raw, normalizedType, nil
+}
 
 // ProcessEvent reads an event from stdin and sends directly to API.
 func ProcessEvent(reader io.Reader, cfg *config.Config, tool string) error {
 	return ProcessEventWithEvent(reader, cfg, tool, "")
 }
 
-// ProcessEventWithEvent reads an event from stdin with event type and sends to API.
+// ProcessEventWithEvent buffers events and sends aggregated scan on stop events.
 func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType string) error {
+	cleanupStaleBuffers()
+
 	bufScanner := bufio.NewScanner(reader)
 	if !bufScanner.Scan() {
 		if err := bufScanner.Err(); err != nil {
 			return fmt.Errorf("failed to read input: %w", err)
 		}
-		return fmt.Errorf("no input received")
+		return nil
 	}
 
-	var event models.Event
-	if err := json.Unmarshal(bufScanner.Bytes(), &event); err != nil {
-		return fmt.Errorf("failed to parse event: %w", err)
+	rawJSON := bufScanner.Bytes()
+	if len(rawJSON) == 0 {
+		return nil
+	}
+
+	event, rawMap, normalizedType, err := normalizeHookEvent(rawJSON, tool, eventType)
+	if err != nil {
+		return fmt.Errorf("failed to normalize event: %w", err)
 	}
 
 	if event.Timestamp.IsZero() {
@@ -49,23 +396,51 @@ func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType
 		}
 	}
 
-	if tool != "" && event.Tool == "" {
-		event.Tool = tool
+	sessionKey := event.ConversationID
+	if sessionKey == "" {
+		sessionKey = event.SessionID
+	}
+	if sessionKey == "" {
+		sessionKey = event.DeviceID + "_default"
 	}
 
-	if eventType != "" && event.HookType == "" {
-		event.HookType = models.HookType(eventType)
+	if IsStopEvent(normalizedType) {
+		if err := appendToBuffer(sessionKey, event, rawMap); err != nil {
+			return fmt.Errorf("failed to buffer event: %w", err)
+		}
+
+		bufferedEvents, err := readAndClearBuffer(sessionKey)
+		if err != nil {
+			return fmt.Errorf("failed to read buffer: %w", err)
+		}
+
+		if len(bufferedEvents) == 0 {
+			return nil
+		}
+
+		scan := createAggregatedScan(bufferedEvents, tool)
+		if scan == nil {
+			return nil
+		}
+
+		if !cfg.Server.Enabled {
+			return nil
+		}
+
+		client, err := api.NewClient(cfg)
+		if err != nil {
+			return nil
+		}
+
+		if err := client.SendScan(scan); err != nil {
+			return fmt.Errorf("sync failed: %w", err)
+		}
+
+		return nil
 	}
 
-	scan := scanner.CreateScanFromEvent(event)
-
-	client, err := api.NewClient(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create API client: %w", err)
-	}
-
-	if err := client.SendScan(scan); err != nil {
-		return fmt.Errorf("failed to send scan: %w", err)
+	if err := appendToBuffer(sessionKey, event, rawMap); err != nil {
+		return fmt.Errorf("failed to buffer event: %w", err)
 	}
 
 	return nil
@@ -86,14 +461,6 @@ func RunHookHandlerWithToolAndEvent(tool, event string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	if !cfg.Server.Enabled {
-		return fmt.Errorf("server sync is not enabled. Set INTENTRA_SERVER_ENDPOINT and INTENTRA_SERVER_ENABLED=true")
-	}
-
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("invalid config: %w. Set INTENTRA_API_KEY_ID and INTENTRA_API_SECRET", err)
 	}
 
 	return ProcessEventWithEvent(os.Stdin, cfg, tool, event)

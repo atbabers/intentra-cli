@@ -9,35 +9,46 @@ import (
 )
 
 func TestProcessEvent_ParsesEvent(t *testing.T) {
-	// Create a config (will fail on API send, but should parse event)
 	cfg := config.DefaultConfig()
 	cfg.Server.Enabled = true
-	cfg.Server.Endpoint = "http://localhost:9999/v1" // Non-existent endpoint
+	cfg.Server.Endpoint = "http://localhost:9999/v1"
 	cfg.Server.Auth.Mode = "hmac"
 	cfg.Server.Auth.HMAC.KeyID = "test-key"
 	cfg.Server.Auth.HMAC.Secret = "test-secret"
 
-	input := `{"hook_type": "afterAgentResponse", "conversation_id": "test-123"}`
-	reader := bytes.NewBufferString(input)
+	promptInput := `{"conversation_id": "test-123"}`
+	promptReader := bytes.NewBufferString(promptInput)
+	err := ProcessEventWithEvent(promptReader, cfg, "cursor", "beforeSubmitPrompt")
+	if err != nil {
+		t.Errorf("Unexpected error buffering prompt event: %v", err)
+	}
 
-	// This will fail on API send (connection refused), but should parse the event
-	err := ProcessEvent(reader, cfg, "cursor")
+	stopInput := `{"conversation_id": "test-123"}`
+	stopReader := bytes.NewBufferString(stopInput)
+	err = ProcessEventWithEvent(stopReader, cfg, "cursor", "stop")
 	if err == nil {
 		t.Error("Expected error due to non-existent API endpoint")
 	}
-	// Should fail on connection, not parsing
-	if !strings.Contains(err.Error(), "failed to send scan") {
-		t.Errorf("Expected 'failed to send scan' error, got: %v", err)
+	if err != nil && !strings.Contains(err.Error(), "failed") {
+		t.Errorf("Expected failure error, got: %v", err)
 	}
 }
 
 func TestRunHookHandlerWithTool_RequiresConfig(t *testing.T) {
-	// Clear environment to ensure no config
-	t.Setenv("INTENTRA_SERVER_ENDPOINT", "")
-	t.Setenv("INTENTRA_SERVER_ENABLED", "")
+	cfg := config.DefaultConfig()
+	cfg.Server.Enabled = false
 
-	err := RunHookHandlerWithTool("cursor")
+	emptyInput := bytes.NewBufferString("")
+	err := ProcessEventWithEvent(emptyInput, cfg, "cursor", "stop")
+	if err != nil {
+		t.Errorf("Empty input should not return error, got: %v", err)
+	}
+
+	cfg.Server.Enabled = true
+	cfg.Server.Endpoint = ""
+	validInput := bytes.NewBufferString(`{"conversation_id": "test"}`)
+	err = ProcessEventWithEvent(validInput, cfg, "cursor", "stop")
 	if err == nil {
-		t.Error("Expected error when server not configured")
+		t.Error("Expected error when endpoint not configured")
 	}
 }

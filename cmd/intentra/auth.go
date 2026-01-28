@@ -23,8 +23,10 @@ func newLoginCmd() *cobra.Command {
 	var noBrowser bool
 
 	cmd := &cobra.Command{
-		Use:   "login",
-		Short: "Authenticate with Intentra",
+		Use:           "login",
+		Short:         "Authenticate with Intentra",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		Long: `Authenticate with your Intentra account using device authorization flow.
 
 This will:
@@ -43,9 +45,11 @@ This will:
 
 func newLogoutCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "logout",
-		Short: "Log out of Intentra",
-		Long:  `Remove stored credentials and log out of Intentra.`,
+		Use:           "logout",
+		Short:         "Log out of Intentra",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Long:          `Remove stored credentials and log out of Intentra.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLogout()
 		},
@@ -54,9 +58,11 @@ func newLogoutCmd() *cobra.Command {
 
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "status",
-		Short: "Show authentication status",
-		Long:  `Display current authentication status and user information.`,
+		Use:           "status",
+		Short:         "Show authentication status",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Long:          `Display current authentication status and user information.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runStatus()
 		},
@@ -66,9 +72,8 @@ func newStatusCmd() *cobra.Command {
 func runLogin(noBrowser bool) error {
 	creds := auth.GetValidCredentials()
 	if creds != nil {
-		fmt.Println("You are already logged in.")
-		fmt.Println("Run 'intentra logout' first to log in with a different account.")
-		return nil
+		fmt.Println("Already logged in. Run 'intentra logout' first.")
+		return fmt.Errorf("already logged in")
 	}
 
 	cfg, err := loadConfig()
@@ -160,32 +165,152 @@ func runStatus() error {
 	}
 
 	if creds.IsExpired() {
-		fmt.Println("Status: Session expired")
+		refreshed, err := auth.RefreshCredentials(creds)
+		if err != nil {
+			fmt.Println("Status: Session expired")
+			fmt.Println()
+			if creds.Email != "" {
+				fmt.Printf("Email: %s\n", creds.Email)
+			}
+			fmt.Println()
+			fmt.Println("Run 'intentra login' to re-authenticate.")
+			return nil
+		}
+		creds = refreshed
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	endpoint := cfg.Server.Endpoint
+	if endpoint == "" {
+		endpoint = defaultAPIEndpoint
+	}
+
+	profile, err := fetchUserProfile(endpoint, creds.AccessToken)
+	if err != nil {
+		fmt.Println("Status: Logged in")
 		fmt.Println()
-		fmt.Println("Run 'intentra login' to re-authenticate.")
+		if creds.Email != "" {
+			fmt.Printf("Email: %s\n", creds.Email)
+		}
+		fmt.Println("Unable to fetch profile details. Server may be temporarily slow.")
 		return nil
 	}
 
-	fmt.Println("Status: Logged in")
-	fmt.Println()
-
-	if creds.Email != "" {
-		fmt.Printf("Email: %s\n", creds.Email)
-	}
-	if creds.UserID != "" {
-		fmt.Printf("User ID: %s\n", creds.UserID)
+	if profile.CurrentOrgID == "" {
+		fmt.Printf("Email: %s\n", profile.Email)
+		fmt.Println("Organization: None")
+		fmt.Println("Plan: Free")
+		return nil
 	}
 
-	remaining := time.Until(creds.ExpiresAt)
-	if remaining > 0 {
-		if remaining > time.Hour {
-			fmt.Printf("Token expires: in %d hours\n", int(remaining.Hours()))
-		} else {
-			fmt.Printf("Token expires: in %d minutes\n", int(remaining.Minutes()))
-		}
+	org, err := fetchOrganization(endpoint, creds.AccessToken, profile.CurrentOrgID)
+	if err != nil {
+		fmt.Printf("Email: %s\n", profile.Email)
+		fmt.Println("Unable to fetch organization details.")
+		return nil
 	}
+
+	fmt.Printf("Email: %s\n", profile.Email)
+	fmt.Printf("Organization: %s\n", org.Name)
+	fmt.Printf("Plan: %s\n", capitalizeFirst(org.Plan))
 
 	return nil
+}
+
+type userProfile struct {
+	Email        string `json:"email"`
+	Name         string `json:"name"`
+	CurrentOrgID string `json:"current_org_id"`
+}
+
+type organization struct {
+	OrgID string `json:"org_id"`
+	Name  string `json:"name"`
+	Plan  string `json:"plan"`
+}
+
+func fetchUserProfile(endpoint, accessToken string) (*userProfile, error) {
+	url := endpoint + "/users/me"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch user profile: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		User userProfile `json:"user"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &result.User, nil
+}
+
+func fetchOrganization(endpoint, accessToken, orgID string) (*organization, error) {
+	url := endpoint + "/orgs/" + orgID
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch organization: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	var result struct {
+		Organization organization `json:"organization"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &result.Organization, nil
+}
+
+func capitalizeFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	if s[0] >= 'a' && s[0] <= 'z' {
+		return string(s[0]-32) + s[1:]
+	}
+	return s
 }
 
 func requestDeviceCode(endpoint string) (*auth.DeviceCodeResponse, error) {
@@ -320,7 +445,7 @@ func registerMachine(endpoint, accessToken string) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)

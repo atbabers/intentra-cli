@@ -43,7 +43,6 @@ type Scan struct {
 	Source         *ScanSource  `json:"source,omitempty"`
 	Content        *ScanContent `json:"content,omitempty"`
 	Events         []Event      `json:"events,omitempty"`
-	Violations     []Violation  `json:"violations,omitempty"`
 
 	// Aggregated metrics
 	TotalTokens    int     `json:"total_tokens"`
@@ -52,13 +51,15 @@ type Scan struct {
 	ThinkingTokens int     `json:"thinking_tokens"`
 	LLMCalls       int     `json:"llm_calls"`
 	ToolCalls      int     `json:"tool_calls"`
-	Retries        int     `json:"retries"`
 	EstimatedCost  float64 `json:"estimated_cost"`
 
 	// Analysis results
 	RefundLikelihood int     `json:"refund_likelihood,omitempty"`
 	RefundAmount     float64 `json:"refund_amount,omitempty"`
 	Summary          string  `json:"summary,omitempty"`
+
+	// Raw hook events for violation detection
+	RawEvents []map[string]any `json:"raw_events,omitempty"`
 }
 
 // Duration returns the scan duration.
@@ -67,18 +68,28 @@ func (s *Scan) Duration() time.Duration {
 }
 
 // AddEvent adds an event and updates metrics.
+// Uses NormalizedType for event classification.
 func (s *Scan) AddEvent(e Event) {
-	e.ScanID = s.ID // Mark event with parent scan ID
+	e.ScanID = s.ID
 	s.Events = append(s.Events, e)
 	s.InputTokens += e.InputTokens
 	s.OutputTokens += e.OutputTokens
 	s.ThinkingTokens += e.ThinkingTokens
 	s.TotalTokens = s.InputTokens + s.OutputTokens + s.ThinkingTokens
 
-	switch e.HookType {
-	case HookAfterAgentResponse:
+	llmEvents := map[string]bool{
+		"after_response": true, "after_tool": true, "after_file_edit": true,
+		"after_file_read": true, "after_shell": true, "after_mcp": true, "after_model": true,
+	}
+	toolEvents := map[string]bool{
+		"after_tool": true, "after_file_edit": true, "after_file_read": true,
+		"after_shell": true, "after_mcp": true,
+	}
+
+	if llmEvents[e.NormalizedType] {
 		s.LLMCalls++
-	case HookAfterMCPExecution, HookAfterShellExecution:
+	}
+	if toolEvents[e.NormalizedType] {
 		s.ToolCalls++
 	}
 }

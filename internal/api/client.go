@@ -122,40 +122,81 @@ func configureMTLS(cfg *config.Config) (*tls.Config, error) {
 
 // SendScan sends a single scan to the API.
 func (c *Client) SendScan(scan *models.Scan) error {
-	return c.SendScans([]*models.Scan{scan})
-}
-
-// SendScans sends a batch of scans to the API.
-func (c *Client) SendScans(scans []*models.Scan) error {
-	if len(scans) == 0 {
-		return nil
-	}
-
-	// Get device ID (auto-generated if not configured)
 	deviceID, err := c.getDeviceID()
 	if err != nil {
 		return fmt.Errorf("failed to get device ID: %w", err)
 	}
 
-	// Get device metadata for every request
-	metadata := device.GetMetadata()
-
-	// Prepare request body with device ID and metadata
-	body := map[string]any{
-		"device_id":        deviceID,
-		"hostname":         metadata.Hostname,
-		"username":         metadata.Username,
-		"platform":         metadata.Platform,
-		"os_version":       metadata.OSVersion,
-		"intentra_version": metadata.IntentraVersion,
-		"scans":            scans,
+	durationMs := int64(0)
+	if !scan.EndTime.IsZero() && !scan.StartTime.IsZero() {
+		durationMs = scan.EndTime.Sub(scan.StartTime).Milliseconds()
 	}
+
+	sessionID := ""
+	if scan.Source != nil {
+		sessionID = scan.Source.SessionID
+	}
+
+	var events []map[string]any
+	if len(scan.RawEvents) > 0 {
+		events = scan.RawEvents
+	} else {
+		for _, ev := range scan.Events {
+			evMap := map[string]any{
+				"hook_type":       string(ev.HookType),
+				"normalized_type": ev.NormalizedType,
+				"timestamp":       ev.Timestamp.Format(time.RFC3339Nano),
+				"tool_name":       ev.ToolName,
+				"command":         ev.Command,
+				"command_output":  ev.CommandOutput,
+				"file_path":       ev.FilePath,
+				"prompt":          ev.Prompt,
+				"response":        ev.Response,
+				"thought":         ev.Thought,
+				"duration_ms":     ev.DurationMs,
+				"conversation_id": ev.ConversationID,
+				"session_id":      ev.SessionID,
+				"tokens": map[string]int{
+					"input":    ev.InputTokens,
+					"output":   ev.OutputTokens,
+					"thinking": ev.ThinkingTokens,
+				},
+			}
+			if len(ev.ToolInput) > 0 {
+				var toolInput map[string]any
+				if err := json.Unmarshal(ev.ToolInput, &toolInput); err == nil {
+					evMap["tool_input"] = toolInput
+				}
+			}
+			if len(ev.ToolOutput) > 0 {
+				var toolOutput any
+				if err := json.Unmarshal(ev.ToolOutput, &toolOutput); err == nil {
+					evMap["tool_output"] = toolOutput
+				}
+			}
+			events = append(events, evMap)
+		}
+	}
+
+	body := map[string]any{
+		"tool":            scan.Tool,
+		"started_at":      scan.StartTime.Format(time.RFC3339Nano),
+		"ended_at":        scan.EndTime.Format(time.RFC3339Nano),
+		"duration_ms":     durationMs,
+		"llm_call_count":  scan.LLMCalls,
+		"total_tokens":    scan.TotalTokens,
+		"estimated_cost":  scan.EstimatedCost,
+		"events":          events,
+		"device_id":       deviceID,
+		"conversation_id": scan.ConversationID,
+		"session_id":      sessionID,
+	}
+
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("failed to marshal scans: %w", err)
+		return fmt.Errorf("failed to marshal scan: %w", err)
 	}
 
-	// Create request
 	url := c.cfg.Server.Endpoint + "/scans"
 	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
 	if err != nil {
@@ -165,24 +206,31 @@ func (c *Client) SendScans(scans []*models.Scan) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "intentra-cli/1.0")
 
-	// Add authentication
 	if err := c.addAuth(req, jsonBody); err != nil {
 		return fmt.Errorf("failed to add auth: %w", err)
 	}
 
-	// Send request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Check response
-	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API returned %d: %s", resp.StatusCode, string(body))
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
+	return nil
+}
+
+// SendScans sends a batch of scans to the API by calling SendScan for each.
+func (c *Client) SendScans(scans []*models.Scan) error {
+	for _, scan := range scans {
+		if err := c.SendScan(scan); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -218,15 +266,25 @@ func (c *Client) getDeviceID() (string, error) {
 }
 
 // addAuth adds authentication headers based on config.
+// Priority: JWT credentials > config auth mode (hmac/api_key/mtls)
 func (c *Client) addAuth(req *http.Request, body []byte) error {
+	creds := auth.GetValidCredentials()
+	if creds != nil {
+		req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
+		deviceID, err := c.getDeviceID()
+		if err != nil {
+			return fmt.Errorf("failed to get device ID: %w", err)
+		}
+		req.Header.Set("X-Machine-ID", deviceID)
+		return nil
+	}
+
 	switch c.cfg.Server.Auth.Mode {
 	case "hmac":
 		return c.addHMACAuth(req, body)
 	case "api_key":
 		return c.addAPIKeyAuth(req, body)
 	case "mtls":
-		// mTLS authentication is handled at transport level
-		// Just add device ID header
 		deviceID, err := c.getDeviceID()
 		if err != nil {
 			return err
@@ -234,7 +292,7 @@ func (c *Client) addAuth(req *http.Request, body []byte) error {
 		req.Header.Set("X-Device-ID", deviceID)
 		return nil
 	default:
-		return fmt.Errorf("unknown auth mode: %s", c.cfg.Server.Auth.Mode)
+		return fmt.Errorf("not authenticated - run 'intentra login' or configure auth in config.yaml")
 	}
 }
 

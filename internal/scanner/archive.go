@@ -13,28 +13,26 @@ import (
 )
 
 type ArchivedScan struct {
-	ID             string                 `json:"scan_id"`
-	DeviceID       string                 `json:"device_id,omitempty"`
-	Tool           string                 `json:"tool,omitempty"`
-	ConversationID string                 `json:"conversation_id,omitempty"`
-	SessionID      string                 `json:"session_id,omitempty"`
-	StartTime      time.Time              `json:"start_time"`
-	EndTime        time.Time              `json:"end_time"`
-	DurationMs     int64                  `json:"duration_ms"`
-	TotalTokens    int                    `json:"total_tokens"`
-	InputTokens    int                    `json:"input_tokens"`
-	OutputTokens   int                    `json:"output_tokens"`
-	ThinkingTokens int                    `json:"thinking_tokens"`
-	LLMCalls       int                    `json:"llm_calls"`
-	ToolCalls      int                    `json:"tool_calls"`
-	Retries        int                    `json:"retries"`
-	EstimatedCost  float64                `json:"estimated_cost"`
-	Violations     []models.Violation     `json:"violations,omitempty"`
-	EventsHash     string                 `json:"events_hash"`
-	EventCount     int                    `json:"event_count"`
-	EventTypeCounts map[string]int        `json:"event_type_counts,omitempty"`
-	ArchivedAt     time.Time              `json:"archived_at"`
-	Events         []ArchivedEvent        `json:"events,omitempty"`
+	ID              string             `json:"scan_id"`
+	DeviceID        string             `json:"device_id,omitempty"`
+	Tool            string             `json:"tool,omitempty"`
+	ConversationID  string             `json:"conversation_id,omitempty"`
+	SessionID       string             `json:"session_id,omitempty"`
+	StartTime       time.Time          `json:"start_time"`
+	EndTime         time.Time          `json:"end_time"`
+	DurationMs      int64              `json:"duration_ms"`
+	TotalTokens     int                `json:"total_tokens"`
+	InputTokens     int                `json:"input_tokens"`
+	OutputTokens    int                `json:"output_tokens"`
+	ThinkingTokens  int                `json:"thinking_tokens"`
+	LLMCalls        int                `json:"llm_calls"`
+	ToolCalls       int                `json:"tool_calls"`
+	EstimatedCost   float64        `json:"estimated_cost"`
+	EventsHash      string         `json:"events_hash"`
+	EventCount      int                `json:"event_count"`
+	EventTypeCounts map[string]int     `json:"event_type_counts,omitempty"`
+	ArchivedAt      time.Time          `json:"archived_at"`
+	Events          []ArchivedEvent    `json:"events,omitempty"`
 }
 
 type ArchivedEvent struct {
@@ -105,9 +103,7 @@ func createArchivedScan(scan *models.Scan, cfg *config.Config) *ArchivedScan {
 		ThinkingTokens:  scan.ThinkingTokens,
 		LLMCalls:        scan.LLMCalls,
 		ToolCalls:       scan.ToolCalls,
-		Retries:         scan.Retries,
 		EstimatedCost:   scan.EstimatedCost,
-		Violations:      scan.Violations,
 		EventsHash:      eventsHash,
 		EventCount:      len(scan.Events),
 		EventTypeCounts: eventTypeCounts,

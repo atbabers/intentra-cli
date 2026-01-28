@@ -9,9 +9,9 @@ import (
 
 func TestAggregateEvents(t *testing.T) {
 	events := []models.Event{
-		{HookType: models.HookBeforeSubmitPrompt, ConversationID: "conv-1", Timestamp: time.Now()},
-		{HookType: models.HookAfterAgentResponse, ConversationID: "conv-1", Timestamp: time.Now().Add(time.Second)},
-		{HookType: models.HookStop, ConversationID: "conv-1", Timestamp: time.Now().Add(2 * time.Second)},
+		{NormalizedType: "before_prompt", ConversationID: "conv-1", Timestamp: time.Now()},
+		{NormalizedType: "after_response", ConversationID: "conv-1", Timestamp: time.Now().Add(time.Second)},
+		{NormalizedType: "stop", ConversationID: "conv-1", Timestamp: time.Now().Add(2 * time.Second)},
 	}
 
 	scans := AggregateEvents(events)
@@ -25,10 +25,10 @@ func TestAggregateEvents(t *testing.T) {
 
 func TestAggregateMultipleConversations(t *testing.T) {
 	events := []models.Event{
-		{HookType: models.HookBeforeSubmitPrompt, ConversationID: "conv-1", Timestamp: time.Now()},
-		{HookType: models.HookBeforeSubmitPrompt, ConversationID: "conv-2", Timestamp: time.Now()},
-		{HookType: models.HookStop, ConversationID: "conv-1", Timestamp: time.Now().Add(time.Second)},
-		{HookType: models.HookStop, ConversationID: "conv-2", Timestamp: time.Now().Add(time.Second)},
+		{NormalizedType: "before_prompt", ConversationID: "conv-1", Timestamp: time.Now()},
+		{NormalizedType: "before_prompt", ConversationID: "conv-2", Timestamp: time.Now()},
+		{NormalizedType: "stop", ConversationID: "conv-1", Timestamp: time.Now().Add(time.Second)},
+		{NormalizedType: "stop", ConversationID: "conv-2", Timestamp: time.Now().Add(time.Second)},
 	}
 
 	scans := AggregateEvents(events)

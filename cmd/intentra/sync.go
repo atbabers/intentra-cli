@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/atbabers/intentra-cli/internal/api"
 	"github.com/atbabers/intentra-cli/internal/scanner"
@@ -14,8 +15,10 @@ var keepLocal bool
 // newSyncNowCmd returns the sync now command with flags.
 func newSyncNowCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "now",
-		Short: "Force sync all pending scans",
+		Use:           "now",
+		Short:         "Force sync all pending scans",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		Long: `Sync all pending scans to the server and clean up local files.
 
 By default, local scan files are deleted after successful sync since
@@ -32,15 +35,18 @@ the server is the source of truth. Use --keep-local to preserve files.`,
 func runSyncNow(cmd *cobra.Command, args []string) error {
 	cfg, err := loadConfig()
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return err
 	}
 	if !cfg.Server.Enabled {
-		return fmt.Errorf("server sync is not enabled. Set server.enabled=true in config or set INTENTRA_SERVER_ENDPOINT")
+		fmt.Fprintln(os.Stderr, "Error: server sync is not enabled. Set server.enabled=true in config or set INTENTRA_SERVER_ENDPOINT")
+		return fmt.Errorf("server sync not enabled")
 	}
 
 	scans, err := scanner.LoadScans()
 	if err != nil {
-		return fmt.Errorf("failed to load scans: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: failed to load scans: %v\n", err)
+		return err
 	}
 
 	if len(scans) == 0 {

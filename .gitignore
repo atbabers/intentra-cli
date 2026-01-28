@@ -1,5 +1,6 @@
 # Binaries
 bin/
+/intentra
 *.exe
 *.exe~
 *.dll
@@ -43,3 +44,8 @@ dist/
 
 # Temporary files
 tmp/
+
+# Node.js artifacts (not needed for Go project)
+node_modules/
+package-lock.json
+package.json

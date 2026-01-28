@@ -56,16 +56,34 @@ make test
 
 ```
 intentra-cli/
-├── cmd/intentra/       # CLI entry point and commands
+├── cmd/intentra/           # CLI entry point and commands
 ├── internal/
-│   ├── api/            # HTTP client for server communication
-│   ├── buffer/         # Event buffering
-│   ├── config/         # Configuration management
-│   ├── device/         # Device identification
-│   ├── hooks/          # Hook management and normalizers
-│   └── scanner/        # Scan aggregation
-└── pkg/models/         # Data models
+│   ├── api/                # HTTP client for server communication
+│   ├── auth/               # Authentication and token management
+│   ├── config/             # Configuration management
+│   ├── device/             # Device identification
+│   ├── hooks/              # Hook management and event normalization
+│   │   ├── handler.go      # Event processing and scan aggregation
+│   │   ├── manager.go      # Hook installation/uninstallation
+│   │   ├── normalizer.go   # Normalizer interface and constants
+│   │   ├── normalizer_cursor.go    # Cursor event mappings
+│   │   ├── normalizer_claude.go    # Claude Code event mappings
+│   │   ├── normalizer_gemini.go    # Gemini CLI event mappings
+│   │   ├── normalizer_copilot.go   # GitHub Copilot event mappings
+│   │   ├── normalizer_windsurf.go  # Windsurf Cascade event mappings
+│   │   └── templates.go    # Hook JSON templates per tool
+│   └── scanner/            # Scan aggregation and tracking
+└── pkg/models/             # Data models (Event, Scan)
 ```
+
+### Adding Support for a New Tool
+
+1. Create `internal/hooks/normalizer_<tool>.go` implementing the `Normalizer` interface
+2. Register the normalizer in `init()` with `RegisterNormalizer()`
+3. Add tool constants to `internal/hooks/manager.go`
+4. Add hook JSON template to `internal/hooks/templates.go`
+5. Add tests in `internal/hooks/*_test.go`
+6. Update documentation
 
 ## Coding Standards
 

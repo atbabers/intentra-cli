@@ -30,11 +30,11 @@ var (
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "intentra",
-		Short: "AI usage monitoring and violation detection",
-		Long: `Intentra monitors AI coding assistants (Cursor, Claude Code) for policy violations,
-tracks usage metrics, and optionally syncs data to a central server.`,
+		Use:     "intentra",
+		Short:   "AI coding cost tracking and usage monitoring",
 		Version: version,
+		Long: `Intentra monitors AI coding assistants (Cursor, Claude Code, Gemini CLI),
+tracks usage metrics, and optionally syncs data to a central server.`,
 	}
 
 	// Global flags
@@ -43,7 +43,8 @@ tracks usage metrics, and optionally syncs data to a central server.`,
 	rootCmd.PersistentFlags().StringVar(&apiKeyID, "api-key-id", "", "API key ID for authentication")
 	rootCmd.PersistentFlags().StringVar(&apiSecret, "api-secret", "", "API secret for authentication")
 
-	// Add commands
+	rootCmd.AddCommand(newInstallCmd())
+	rootCmd.AddCommand(newUninstallCmd())
 	rootCmd.AddCommand(newHooksCmd())
 	rootCmd.AddCommand(newScanCmd())
 	rootCmd.AddCommand(newConfigCmd())
@@ -55,11 +56,17 @@ tracks usage metrics, and optionally syncs data to a central server.`,
 	var hookTool string
 	var hookEvent string
 	hookCmd := &cobra.Command{
-		Use:    "hook",
-		Short:  "Process a hook event (internal use)",
-		Hidden: true,
+		Use:           "hook",
+		Short:         "Process a hook event (internal use)",
+		Hidden:        true,
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return hooks.RunHookHandlerWithToolAndEvent(hookTool, hookEvent)
+			if err := hooks.RunHookHandlerWithToolAndEvent(hookTool, hookEvent); err != nil {
+				fmt.Fprintf(os.Stderr, "hook error: %v\n", err)
+				return err
+			}
+			return nil
 		},
 	}
 	hookCmd.Flags().StringVar(&hookTool, "tool", "", "AI tool (cursor, claude)")
@@ -67,7 +74,6 @@ tracks usage metrics, and optionally syncs data to a central server.`,
 	rootCmd.AddCommand(hookCmd)
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
@@ -79,10 +85,11 @@ func newConfigCmd() *cobra.Command {
 		Short: "Manage configuration",
 	}
 
-	// config show
 	showCmd := &cobra.Command{
-		Use:   "show",
-		Short: "Show current configuration",
+		Use:           "show",
+		Short:         "Show current configuration",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig()
 			if err != nil {
@@ -93,27 +100,31 @@ func newConfigCmd() *cobra.Command {
 		},
 	}
 
-	// config init
 	initCmd := &cobra.Command{
-		Use:   "init",
-		Short: "Generate sample configuration file",
+		Use:           "init",
+		Short:         "Generate sample configuration file",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			config.PrintSample()
 			return nil
 		},
 	}
 
-	// config validate
 	validateCmd := &cobra.Command{
-		Use:   "validate",
-		Short: "Validate configuration for server sync",
+		Use:           "validate",
+		Short:         "Validate configuration for server sync",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig()
 			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
+				fmt.Fprintf(os.Stderr, "Error: failed to load config: %v\n", err)
+				return err
 			}
 			if err := cfg.Validate(); err != nil {
-				return fmt.Errorf("validation failed: %w", err)
+				fmt.Fprintf(os.Stderr, "Error: validation failed: %v\n", err)
+				return err
 			}
 			fmt.Println("✓ Configuration is valid")
 			if cfg.Server.Enabled {
@@ -140,11 +151,14 @@ Requires server sync to be enabled in config.`,
 	}
 
 	statusCmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show sync status",
+		Use:           "status",
+		Short:         "Show sync status",
+		SilenceUsage:  true,
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig()
 			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				return err
 			}
 

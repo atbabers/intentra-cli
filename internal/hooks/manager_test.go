@@ -95,11 +95,10 @@ func TestGetHooksDir(t *testing.T) {
 
 func TestStatus(t *testing.T) {
 	statuses := Status()
-	if len(statuses) != 3 {
-		t.Errorf("Expected 3 tool statuses, got %d", len(statuses))
+	if len(statuses) != 5 {
+		t.Errorf("Expected 5 tool statuses, got %d", len(statuses))
 	}
 
-	// Check that we have all tools
 	tools := make(map[Tool]bool)
 	for _, s := range statuses {
 		tools[s.Tool] = true

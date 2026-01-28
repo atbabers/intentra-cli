@@ -126,23 +126,44 @@ func GenerateCursorHooksJSON(handlerPath string) (string, error) {
 
 // claudeCodeHookTypes contains all available hooks per https://code.claude.com/docs/en/hooks.
 var claudeCodeHookTypes = []string{
-	// Tool hooks (matcher applies)
 	"PreToolUse",
 	"PostToolUse",
 	"PostToolUseFailure",
 	"PermissionRequest",
-	// Session lifecycle hooks
+	"Setup",
 	"SessionStart",
 	"SessionEnd",
 	"Stop",
-	// User interaction hooks
 	"UserPromptSubmit",
 	"Notification",
-	// Subagent hooks
 	"SubagentStart",
 	"SubagentStop",
-	// Other hooks
 	"PreCompact",
+}
+
+// copilotHookTypes contains all available hooks per https://docs.github.com/en/copilot/reference/hooks-configuration.
+var copilotHookTypes = []string{
+	"sessionStart",
+	"sessionEnd",
+	"userPromptSubmitted",
+	"preToolUse",
+	"postToolUse",
+	"errorOccurred",
+}
+
+// windsurfHookTypes contains all available hooks per https://docs.windsurf.com/windsurf/cascade/hooks.
+var windsurfHookTypes = []string{
+	"pre_read_code",
+	"post_read_code",
+	"pre_write_code",
+	"post_write_code",
+	"pre_run_command",
+	"post_run_command",
+	"pre_mcp_tool_use",
+	"post_mcp_tool_use",
+	"pre_user_prompt",
+	"post_cascade_response",
+	"post_setup_worktree",
 }
 
 // GenerateClaudeCodeHooks creates the Claude Code hooks configuration.
@@ -181,4 +202,84 @@ func GenerateClaudeCodeHooks(handlerPath string) (map[string]any, error) {
 	}
 
 	return hooks, nil
+}
+
+// CopilotHookConfig represents GitHub Copilot's hooks.json structure.
+type CopilotHookConfig struct {
+	Version int                          `json:"version"`
+	Hooks   map[string][]CopilotHookItem `json:"hooks"`
+}
+
+type CopilotHookItem struct {
+	Type       string `json:"type"`
+	Bash       string `json:"bash,omitempty"`
+	Powershell string `json:"powershell,omitempty"`
+	TimeoutSec int    `json:"timeoutSec,omitempty"`
+}
+
+// GenerateCopilotHooksJSON creates the GitHub Copilot hooks.json content.
+func GenerateCopilotHooksJSON(handlerPath string) (string, error) {
+	if err := validateHandlerPath(handlerPath); err != nil {
+		return "", err
+	}
+
+	config := CopilotHookConfig{
+		Version: 1,
+		Hooks:   make(map[string][]CopilotHookItem),
+	}
+
+	quotedPath := quotePathForShell(handlerPath)
+	windowsPath := handlerPath + ".exe"
+
+	for _, hookType := range copilotHookTypes {
+		config.Hooks[hookType] = []CopilotHookItem{{
+			Type:       "command",
+			Bash:       quotedPath + " hook --tool copilot --event " + hookType,
+			Powershell: windowsPath + " hook --tool copilot --event " + hookType,
+			TimeoutSec: 30,
+		}}
+	}
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return "{}", nil
+	}
+	return string(data), nil
+}
+
+// WindsurfHookConfig represents Windsurf Cascade's hooks.json structure.
+type WindsurfHookConfig struct {
+	Hooks map[string][]WindsurfHookItem `json:"hooks"`
+}
+
+type WindsurfHookItem struct {
+	Command          string `json:"command"`
+	ShowOutput       bool   `json:"show_output,omitempty"`
+	WorkingDirectory string `json:"working_directory,omitempty"`
+}
+
+// GenerateWindsurfHooksJSON creates the Windsurf Cascade hooks.json content.
+func GenerateWindsurfHooksJSON(handlerPath string) (string, error) {
+	if err := validateHandlerPath(handlerPath); err != nil {
+		return "", err
+	}
+
+	config := WindsurfHookConfig{
+		Hooks: make(map[string][]WindsurfHookItem),
+	}
+
+	quotedPath := quotePathForShell(handlerPath)
+
+	for _, hookType := range windsurfHookTypes {
+		config.Hooks[hookType] = []WindsurfHookItem{{
+			Command:    quotedPath + " hook --tool windsurf --event " + hookType,
+			ShowOutput: false,
+		}}
+	}
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return "{}", nil
+	}
+	return string(data), nil
 }

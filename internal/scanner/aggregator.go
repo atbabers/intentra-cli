@@ -71,16 +71,24 @@ func createScan(conversationID string, events []models.Event) models.Scan {
 		scan.ID = hex.EncodeToString(hash[:8])
 	}
 
-	// Calculate metrics
+	llmEvents := map[string]bool{
+		"after_response": true, "after_tool": true, "after_file_edit": true,
+		"after_file_read": true, "after_shell": true, "after_mcp": true, "after_model": true,
+	}
+	toolEvents := map[string]bool{
+		"after_tool": true, "after_file_edit": true, "after_file_read": true,
+		"after_shell": true, "after_mcp": true,
+	}
+
 	for _, e := range events {
 		scan.InputTokens += e.InputTokens
 		scan.OutputTokens += e.OutputTokens
 		scan.ThinkingTokens += e.ThinkingTokens
 
-		switch e.HookType {
-		case models.HookAfterAgentResponse:
+		if llmEvents[e.NormalizedType] {
 			scan.LLMCalls++
-		case models.HookAfterMCPExecution, models.HookAfterShellExecution:
+		}
+		if toolEvents[e.NormalizedType] {
 			scan.ToolCalls++
 		}
 	}

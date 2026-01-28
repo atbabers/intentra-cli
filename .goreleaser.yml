@@ -23,6 +23,7 @@ builds:
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
+      - -X github.com/atbabers/intentra-cli/internal/device.Version={{.Version}}
 
 archives:
   - id: default
@@ -69,7 +70,7 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
     homepage: "https://intentra.sh"
-    description: "Protect your AI coding intent - detect violations before they waste your budget"
+    description: "Observability for AI Coding Assistants"
     license: "Apache-2.0"
     skip_upload: auto
     install: |
@@ -83,7 +84,7 @@ nfpms:
     vendor: Intentra
     homepage: https://intentra.sh
     maintainer: Intentra <support@intentra.sh>
-    description: Protect your AI coding intent - detect violations before they waste your budget
+    description: Observability for AI Coding Assistants
     license: Apache-2.0
     formats:
       - deb

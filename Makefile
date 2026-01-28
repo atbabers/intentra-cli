@@ -1,8 +1,8 @@
-.PHONY: all build test lint clean install coverage help
+.PHONY: all build test lint clean install intentra coverage help
 
 BINARY_NAME=intentra
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS=-ldflags "-X main.version=$(VERSION)"
+LDFLAGS=-ldflags "-X main.version=$(VERSION) -X github.com/atbabers/intentra-cli/internal/device.Version=$(VERSION)"
 
 all: lint test build
 
@@ -35,6 +35,10 @@ clean:
 	rm -rf bin/
 	rm -f coverage.out coverage.html
 
+intentra: build
+	cp bin/$(BINARY_NAME) ~/bin/$(BINARY_NAME)
+	@echo "✓ Installed intentra $(VERSION) to ~/bin/intentra"
+
 snapshot:
 	goreleaser release --snapshot --clean
 
@@ -46,6 +50,7 @@ help:
 	@echo "  all       - Run lint, test, and build"
 	@echo "  build     - Build the binary"
 	@echo "  install   - Install to GOPATH/bin"
+	@echo "  intentra  - Build and install to ~/bin/intentra"
 	@echo "  test      - Run tests"
 	@echo "  coverage  - Run tests with coverage"
 	@echo "  lint      - Run linter"
