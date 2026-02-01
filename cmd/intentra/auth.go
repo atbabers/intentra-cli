@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/atbabers/intentra-cli/internal/auth"
+	"github.com/atbabers/intentra-cli/internal/debug"
 	"github.com/atbabers/intentra-cli/internal/device"
 	"github.com/spf13/cobra"
 )
@@ -245,9 +246,11 @@ func fetchUserProfile(endpoint, accessToken string) (*userProfile, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		debug.LogHTTP("GET", url, 0)
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	debug.LogHTTP("GET", url, resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -280,9 +283,11 @@ func fetchOrganization(endpoint, accessToken, orgID string) (*organization, erro
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		debug.LogHTTP("GET", url, 0)
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	debug.LogHTTP("GET", url, resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch organization: %d", resp.StatusCode)
@@ -318,9 +323,11 @@ func requestDeviceCode(endpoint string) (*auth.DeviceCodeResponse, error) {
 
 	resp, err := http.Post(url, "application/json", nil)
 	if err != nil {
+		debug.LogHTTP("POST", url, 0)
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	debug.LogHTTP("POST", url, resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -362,12 +369,14 @@ func pollForToken(endpoint string, deviceResp *auth.DeviceCodeResponse) (*auth.T
 
 		resp, err := http.Post(url, "application/json", bytes.NewReader(payloadBytes))
 		if err != nil {
+			debug.LogHTTP("POST", url, 0)
 			time.Sleep(interval)
 			continue
 		}
 
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		debug.LogHTTP("POST", url, resp.StatusCode)
 
 		var tokenResp auth.TokenResponse
 		if err := json.Unmarshal(body, &tokenResp); err != nil {
@@ -448,9 +457,11 @@ func registerMachine(endpoint, accessToken string) error {
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		debug.LogHTTP("POST", url, 0)
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	debug.LogHTTP("POST", url, resp.StatusCode)
 
 	body, _ := io.ReadAll(resp.Body)
 

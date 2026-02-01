@@ -6,19 +6,24 @@ package hooks
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/atbabers/intentra-cli/internal/api"
+	"github.com/atbabers/intentra-cli/internal/auth"
 	"github.com/atbabers/intentra-cli/internal/config"
+	"github.com/atbabers/intentra-cli/internal/debug"
 	"github.com/atbabers/intentra-cli/internal/device"
+	"github.com/atbabers/intentra-cli/internal/scanner"
 	"github.com/atbabers/intentra-cli/pkg/models"
 )
 
@@ -160,10 +165,16 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 
 	scan.TotalTokens = scan.InputTokens + scan.OutputTokens + scan.ThinkingTokens
 
-	model := "claude-3-5-sonnet"
 	for _, entry := range events {
 		if entry.Event.Model != "" {
-			model = entry.Event.Model
+			scan.Model = entry.Event.Model
+			break
+		}
+	}
+
+	for _, entry := range events {
+		if entry.Event.GenerationID != "" {
+			scan.GenerationID = entry.Event.GenerationID
 			break
 		}
 	}
@@ -184,6 +195,10 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 		price = 0.005
 	} else if tool == "windsurf" {
 		price = 0.003
+	}
+	model := scan.Model
+	if model == "" {
+		model = "claude-3-5-sonnet"
 	}
 	for prefix, p := range modelPricing {
 		if strings.HasPrefix(model, prefix) {
@@ -217,15 +232,19 @@ func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, 
 	if v, ok := raw["session_id"].(string); ok {
 		event.SessionID = v
 	}
-	if v, ok := raw["generation_id"].(string); ok && event.ConversationID == "" {
-		event.ConversationID = v
-	}
 
 	if v, ok := raw["trajectory_id"].(string); ok && event.ConversationID == "" {
 		event.ConversationID = v
 	}
-	if v, ok := raw["execution_id"].(string); ok && event.SessionID == "" {
-		event.SessionID = v
+
+	if v, ok := raw["generation_id"].(string); ok {
+		event.GenerationID = v
+	}
+	if v, ok := raw["execution_id"].(string); ok && event.GenerationID == "" {
+		event.GenerationID = v
+	}
+	if v, ok := raw["turn_id"].(string); ok && event.GenerationID == "" {
+		event.GenerationID = v
 	}
 
 	if v, ok := raw["hook_event_name"].(string); ok && event.HookType == "" {
@@ -423,17 +442,34 @@ func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType
 			return nil
 		}
 
-		if !cfg.Server.Enabled {
-			return nil
+		synced := false
+
+		creds := auth.GetValidCredentials()
+		if creds != nil {
+			if err := syncScanWithJWT(scan, creds.AccessToken); err != nil {
+				debug.Warn("failed to sync to api.intentra.sh: %v", err)
+			} else {
+				debug.Log("Synced to https://api.intentra.sh")
+				synced = true
+			}
 		}
 
-		client, err := api.NewClient(cfg)
-		if err != nil {
-			return nil
+		if !synced && cfg.Server.Enabled {
+			client, err := api.NewClient(cfg)
+			if err == nil {
+				debug.Log("Syncing to %s (config auth)", cfg.Server.Endpoint)
+				if err := client.SendScan(scan); err != nil {
+					debug.Warn("sync failed: %v", err)
+				}
+			}
 		}
 
-		if err := client.SendScan(scan); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
+		if debug.Enabled {
+			if err := scanner.SaveScan(scan); err != nil {
+				debug.Warn("failed to save scan locally: %v", err)
+			} else {
+				debug.Log("Saved scan locally: %s", scan.ID)
+			}
 		}
 
 		return nil
@@ -463,5 +499,116 @@ func RunHookHandlerWithToolAndEvent(tool, event string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
+	debug.Enabled = cfg.Debug
+
 	return ProcessEventWithEvent(os.Stdin, cfg, tool, event)
+}
+
+const defaultAPIEndpoint = "https://api.intentra.sh"
+
+// syncScanWithJWT sends a scan to the default API endpoint using JWT auth.
+func syncScanWithJWT(scan *models.Scan, accessToken string) error {
+	deviceID, err := device.GetDeviceID()
+	if err != nil {
+		return fmt.Errorf("failed to get device ID: %w", err)
+	}
+
+	durationMs := int64(0)
+	if !scan.EndTime.IsZero() && !scan.StartTime.IsZero() {
+		durationMs = scan.EndTime.Sub(scan.StartTime).Milliseconds()
+	}
+
+	sessionID := ""
+	if scan.Source != nil {
+		sessionID = scan.Source.SessionID
+	}
+
+	var events []map[string]any
+	if len(scan.RawEvents) > 0 {
+		events = scan.RawEvents
+	} else {
+		for _, ev := range scan.Events {
+			evMap := map[string]any{
+				"hook_type":       string(ev.HookType),
+				"normalized_type": ev.NormalizedType,
+				"timestamp":       ev.Timestamp.Format(time.RFC3339Nano),
+				"tool_name":       ev.ToolName,
+				"command":         ev.Command,
+				"command_output":  ev.CommandOutput,
+				"file_path":       ev.FilePath,
+				"prompt":          ev.Prompt,
+				"response":        ev.Response,
+				"thought":         ev.Thought,
+				"duration_ms":     ev.DurationMs,
+				"conversation_id": ev.ConversationID,
+				"session_id":      ev.SessionID,
+				"tokens": map[string]int{
+					"input":    ev.InputTokens,
+					"output":   ev.OutputTokens,
+					"thinking": ev.ThinkingTokens,
+				},
+			}
+			if len(ev.ToolInput) > 0 {
+				var toolInput map[string]any
+				if err := json.Unmarshal(ev.ToolInput, &toolInput); err == nil {
+					evMap["tool_input"] = toolInput
+				}
+			}
+			if len(ev.ToolOutput) > 0 {
+				var toolOutput any
+				if err := json.Unmarshal(ev.ToolOutput, &toolOutput); err == nil {
+					evMap["tool_output"] = toolOutput
+				}
+			}
+			events = append(events, evMap)
+		}
+	}
+
+	body := map[string]any{
+		"tool":            scan.Tool,
+		"started_at":      scan.StartTime.Format(time.RFC3339Nano),
+		"ended_at":        scan.EndTime.Format(time.RFC3339Nano),
+		"duration_ms":     durationMs,
+		"llm_call_count":  scan.LLMCalls,
+		"total_tokens":    scan.TotalTokens,
+		"estimated_cost":  scan.EstimatedCost,
+		"events":          events,
+		"device_id":       deviceID,
+		"conversation_id": scan.ConversationID,
+		"session_id":      sessionID,
+		"generation_id":   scan.GenerationID,
+		"model":           scan.Model,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("failed to marshal scan: %w", err)
+	}
+
+	url := defaultAPIEndpoint + "/scans"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "intentra-cli/1.0")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Machine-ID", deviceID)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		debug.LogHTTP("POST", url, 0)
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	debug.LogHTTP("POST", url, resp.StatusCode)
+
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
 }

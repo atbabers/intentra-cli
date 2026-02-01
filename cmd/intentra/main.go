@@ -11,6 +11,7 @@ import (
 	"os"
 
 	"github.com/atbabers/intentra-cli/internal/config"
+	"github.com/atbabers/intentra-cli/internal/debug"
 	"github.com/atbabers/intentra-cli/internal/hooks"
 	"github.com/spf13/cobra"
 )
@@ -21,6 +22,9 @@ var (
 
 	// cfgFile holds the path to the configuration file.
 	cfgFile string
+
+	// debugMode enables debug output (HTTP requests, local scan saves).
+	debugMode bool
 
 	// apiServer, apiKeyID, and apiSecret are CLI flag overrides for server config.
 	apiServer string
@@ -38,10 +42,15 @@ tracks usage metrics, and optionally syncs data to a central server.`,
 	}
 
 	// Global flags
-	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file (default: ~/.config/intentra/config.yaml)")
+	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file (default: ~/.intentra/config.yaml)")
+	rootCmd.PersistentFlags().BoolVarP(&debugMode, "debug", "d", false, "enable debug output (HTTP requests, local scan saves)")
 	rootCmd.PersistentFlags().StringVar(&apiServer, "api-server", "", "API server endpoint (e.g., https://app.example.com/api/v1)")
 	rootCmd.PersistentFlags().StringVar(&apiKeyID, "api-key-id", "", "API key ID for authentication")
 	rootCmd.PersistentFlags().StringVar(&apiSecret, "api-secret", "", "API secret for authentication")
+
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		return initDebugMode()
+	}
 
 	rootCmd.AddCommand(newInstallCmd())
 	rootCmd.AddCommand(newUninstallCmd())
@@ -205,4 +214,35 @@ func loadConfig() (*config.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// initDebugMode initializes debug mode based on config and CLI flag.
+// It generates a config file on first run if one doesn't exist.
+// If -d flag is used, it persists debug: true to the config file.
+func initDebugMode() error {
+	if !config.ConfigExists() {
+		cfg := config.DefaultConfig()
+		if debugMode {
+			cfg.Debug = true
+		}
+		if err := config.SaveConfig(cfg); err != nil {
+			debug.Warn("could not save config: %v", err)
+		}
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		debug.Enabled = debugMode
+		return nil
+	}
+
+	if debugMode && !cfg.Debug {
+		cfg.Debug = true
+		if err := config.SaveConfig(cfg); err != nil {
+			debug.Warn("could not persist debug setting: %v", err)
+		}
+	}
+
+	debug.Enabled = debugMode || cfg.Debug
+	return nil
 }

@@ -21,6 +21,7 @@ import (
 
 	"github.com/atbabers/intentra-cli/internal/auth"
 	"github.com/atbabers/intentra-cli/internal/config"
+	"github.com/atbabers/intentra-cli/internal/debug"
 	"github.com/atbabers/intentra-cli/internal/device"
 	"github.com/atbabers/intentra-cli/pkg/models"
 )
@@ -212,9 +213,11 @@ func (c *Client) SendScan(scan *models.Scan) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		debug.LogHTTP("POST", url, 0)
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	debug.LogHTTP("POST", url, resp.StatusCode)
 
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -244,9 +247,11 @@ func (c *Client) Health() error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		debug.LogHTTP("GET", url, 0)
 		return fmt.Errorf("health check failed: %w", err)
 	}
 	defer resp.Body.Close()
+	debug.LogHTTP("GET", url, resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check returned: %d", resp.StatusCode)
@@ -417,9 +422,11 @@ func (c *Client) GetScans(days, limit int) (*ScansResponse, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		debug.LogHTTP("GET", url, 0)
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	debug.LogHTTP("GET", url, resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -463,9 +470,11 @@ func (c *Client) GetScan(scanID string) (*ScanDetailResponse, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		debug.LogHTTP("GET", url, 0)
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	debug.LogHTTP("GET", url, resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

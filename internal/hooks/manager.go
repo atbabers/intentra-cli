@@ -59,9 +59,9 @@ func GetHooksDir(tool Tool) (string, error) {
 func getCursorHooksDir(home string) (string, error) {
 	switch runtime.GOOS {
 	case "windows":
-		return filepath.Join(os.Getenv("APPDATA"), "Cursor", "hooks"), nil
+		return filepath.Join(os.Getenv("APPDATA"), "Cursor"), nil
 	default:
-		return filepath.Join(home, ".cursor", "hooks"), nil
+		return filepath.Join(home, ".cursor"), nil
 	}
 }
 
@@ -273,7 +273,9 @@ func installCursor(handlerPath string) error {
 
 	var existingConfig map[string]any
 	if data, err := os.ReadFile(hooksFile); err == nil {
-		json.Unmarshal(data, &existingConfig)
+		if err := json.Unmarshal(data, &existingConfig); err != nil {
+			existingConfig = nil
+		}
 	}
 
 	newHooksJSON, err := GenerateCursorHooksJSON(handlerPath)
@@ -282,7 +284,9 @@ func installCursor(handlerPath string) error {
 	}
 
 	var newConfig map[string]any
-	json.Unmarshal([]byte(newHooksJSON), &newConfig)
+	if err := json.Unmarshal([]byte(newHooksJSON), &newConfig); err != nil {
+		return fmt.Errorf("failed to parse generated hooks config: %w", err)
+	}
 
 	if existingConfig != nil {
 		if existingHooks, ok := existingConfig["hooks"].(map[string]any); ok {
@@ -314,15 +318,38 @@ func uninstallCursor() error {
 	dir, _ := getCursorHooksDir(home)
 	hooksFile := filepath.Join(dir, "hooks.json")
 
-	if _, err := os.Stat(hooksFile); os.IsNotExist(err) {
+	data, err := os.ReadFile(hooksFile)
+	if os.IsNotExist(err) {
 		return fmt.Errorf("no hooks.json found at %s", dir)
 	}
-
-	if err := os.Remove(hooksFile); err != nil {
-		return fmt.Errorf("failed to remove hooks.json: %w", err)
+	if err != nil {
+		return err
 	}
 
-	return nil
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		return err
+	}
+
+	if hooks, ok := config["hooks"].(map[string]any); ok {
+		cleanedHooks := removeIntentraHooksFromMap(hooks)
+		if len(cleanedHooks) > 0 {
+			config["hooks"] = cleanedHooks
+		} else {
+			delete(config, "hooks")
+		}
+	}
+
+	if hooks, ok := config["hooks"].(map[string]any); !ok || len(hooks) == 0 {
+		return os.Remove(hooksFile)
+	}
+
+	newData, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(hooksFile, newData, 0600)
 }
 
 // --- Claude Code ---
@@ -469,9 +496,7 @@ func mergeHookMaps(existing, newHooks map[string]any) map[string]any {
 	for eventType, newList := range newHooks {
 		if existingList, ok := merged[eventType].([]any); ok {
 			if newArr, ok := newList.([]any); ok {
-				for _, item := range newArr {
-					existingList = append(existingList, item)
-				}
+				existingList = append(existingList, newArr...)
 				merged[eventType] = existingList
 			}
 		} else {
@@ -486,7 +511,6 @@ func uninstallClaudeCode() error {
 	dir, _ := getClaudeCodeDir(home)
 	settingsFile := filepath.Join(dir, "settings.json")
 
-	// Read existing settings
 	data, err := os.ReadFile(settingsFile)
 	if os.IsNotExist(err) {
 		return fmt.Errorf("no settings.json found at %s", dir)
@@ -500,10 +524,15 @@ func uninstallClaudeCode() error {
 		return err
 	}
 
-	// Remove hooks
-	delete(settings, "hooks")
+	if hooks, ok := settings["hooks"].(map[string]any); ok {
+		cleanedHooks := removeIntentraHooks(hooks)
+		if len(cleanedHooks) > 0 {
+			settings["hooks"] = cleanedHooks
+		} else {
+			delete(settings, "hooks")
+		}
+	}
 
-	// Write back
 	newData, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
@@ -541,30 +570,28 @@ func installGeminiCLI(handlerPath string) error {
 		settings = make(map[string]any)
 	}
 
-	tools, ok := settings["tools"].(map[string]any)
-	if !ok {
-		tools = make(map[string]any)
-	}
-	tools["enableHooks"] = true
-	settings["tools"] = tools
-
-	newHooks := make(map[string]any)
-	newHooks["enabled"] = true
-
 	quotedPath := quotePathForShell(handlerPath)
 
 	geminiEvents := []string{
-		"SessionStart", "SessionEnd",
-		"BeforeAgent", "AfterAgent",
-		"BeforeModel", "AfterModel",
-		"BeforeToolSelection",
 		"BeforeTool", "AfterTool",
-		"PreCompress", "Notification",
+		"BeforeModel", "AfterModel",
+		"SessionStart", "SessionEnd",
 	}
 
+	newHooks := make(map[string]any)
 	for _, event := range geminiEvents {
-		newHooks[event] = []map[string]string{
-			{"command": fmt.Sprintf("%s audit --tool gemini_cli --event %s", quotedPath, event)},
+		newHooks[event] = []map[string]any{
+			{
+				"matcher": ".*",
+				"hooks": []map[string]any{
+					{
+						"name":    "intentra-" + event,
+						"type":    "command",
+						"command": fmt.Sprintf("%s hook --tool gemini --event %s", quotedPath, event),
+						"timeout": 30000,
+					},
+				},
+			},
 		}
 	}
 
@@ -590,17 +617,29 @@ func installGeminiCLI(handlerPath string) error {
 func removeIntentraHooksFromGemini(hooks map[string]any) map[string]any {
 	cleaned := make(map[string]any)
 	for eventType, hookList := range hooks {
-		if eventType == "enabled" {
-			cleaned[eventType] = hookList
-			continue
-		}
 		if list, ok := hookList.([]any); ok {
 			var filtered []any
 			for _, item := range list {
 				if itemMap, ok := item.(map[string]any); ok {
-					if cmd, ok := itemMap["command"].(string); ok {
-						if !strings.Contains(cmd, "intentra") {
-							filtered = append(filtered, item)
+					if innerHooks, ok := itemMap["hooks"].([]any); ok {
+						var filteredInner []any
+						for _, h := range innerHooks {
+							if hookEntry, ok := h.(map[string]any); ok {
+								isIntentra := false
+								if name, ok := hookEntry["name"].(string); ok && strings.Contains(name, "intentra") {
+									isIntentra = true
+								}
+								if cmd, ok := hookEntry["command"].(string); ok && strings.Contains(cmd, "intentra") {
+									isIntentra = true
+								}
+								if !isIntentra {
+									filteredInner = append(filteredInner, h)
+								}
+							}
+						}
+						if len(filteredInner) > 0 {
+							itemMap["hooks"] = filteredInner
+							filtered = append(filtered, itemMap)
 						}
 					}
 				}
@@ -618,13 +657,9 @@ func mergeGeminiHooks(existing, newHooks map[string]any) map[string]any {
 	for k, v := range existing {
 		merged[k] = v
 	}
-	merged["enabled"] = true
 	for eventType, newList := range newHooks {
-		if eventType == "enabled" {
-			continue
-		}
 		if existingList, ok := merged[eventType].([]any); ok {
-			if newArr, ok := newList.([]map[string]string); ok {
+			if newArr, ok := newList.([]map[string]any); ok {
 				for _, item := range newArr {
 					existingList = append(existingList, item)
 				}
@@ -642,7 +677,6 @@ func uninstallGeminiCLI() error {
 	dir, _ := getGeminiCLIDir(home)
 	settingsFile := filepath.Join(dir, "settings.json")
 
-	// Read existing settings
 	data, err := os.ReadFile(settingsFile)
 	if os.IsNotExist(err) {
 		return fmt.Errorf("no settings.json found at %s", dir)
@@ -656,38 +690,15 @@ func uninstallGeminiCLI() error {
 		return err
 	}
 
-	// Remove intentra hooks but preserve user hooks
 	if hooks, ok := settings["hooks"].(map[string]any); ok {
-		for event, hookList := range hooks {
-			if event == "enabled" {
-				continue
-			}
-			if list, ok := hookList.([]any); ok {
-				var filtered []any
-				for _, h := range list {
-					if hookMap, ok := h.(map[string]any); ok {
-						if cmd, ok := hookMap["command"].(string); ok {
-							if !strings.Contains(cmd, "intentra") {
-								filtered = append(filtered, h)
-							}
-						}
-					}
-				}
-				if len(filtered) > 0 {
-					hooks[event] = filtered
-				} else {
-					delete(hooks, event)
-				}
-			}
-		}
-
-		// If only "enabled" key remains, disable hooks
-		if len(hooks) == 1 {
-			hooks["enabled"] = false
+		cleanedHooks := removeIntentraHooksFromGemini(hooks)
+		if len(cleanedHooks) > 0 {
+			settings["hooks"] = cleanedHooks
+		} else {
+			delete(settings, "hooks")
 		}
 	}
 
-	// Write back
 	newData, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
@@ -721,7 +732,9 @@ func installCopilot(handlerPath string) error {
 
 	var existingConfig map[string]any
 	if data, err := os.ReadFile(hooksFile); err == nil {
-		json.Unmarshal(data, &existingConfig)
+		if err := json.Unmarshal(data, &existingConfig); err != nil {
+			existingConfig = nil
+		}
 	}
 
 	newHooksJSON, err := GenerateCopilotHooksJSON(handlerPath)
@@ -730,7 +743,9 @@ func installCopilot(handlerPath string) error {
 	}
 
 	var newConfig map[string]any
-	json.Unmarshal([]byte(newHooksJSON), &newConfig)
+	if err := json.Unmarshal([]byte(newHooksJSON), &newConfig); err != nil {
+		return fmt.Errorf("failed to parse generated hooks config: %w", err)
+	}
 
 	if existingConfig != nil {
 		if existingHooks, ok := existingConfig["hooks"].(map[string]any); ok {
@@ -790,15 +805,38 @@ func uninstallCopilot() error {
 	dir, _ := getCopilotHooksDir(home)
 	hooksFile := filepath.Join(dir, "hooks.json")
 
-	if _, err := os.Stat(hooksFile); os.IsNotExist(err) {
+	data, err := os.ReadFile(hooksFile)
+	if os.IsNotExist(err) {
 		return fmt.Errorf("no hooks.json found at %s", dir)
 	}
-
-	if err := os.Remove(hooksFile); err != nil {
-		return fmt.Errorf("failed to remove hooks.json: %w", err)
+	if err != nil {
+		return err
 	}
 
-	return nil
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		return err
+	}
+
+	if hooks, ok := config["hooks"].(map[string]any); ok {
+		cleanedHooks := removeIntentraHooksFromCopilot(hooks)
+		if len(cleanedHooks) > 0 {
+			config["hooks"] = cleanedHooks
+		} else {
+			delete(config, "hooks")
+		}
+	}
+
+	if hooks, ok := config["hooks"].(map[string]any); !ok || len(hooks) == 0 {
+		return os.Remove(hooksFile)
+	}
+
+	newData, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(hooksFile, newData, 0600)
 }
 
 // --- Windsurf Cascade ---
@@ -826,7 +864,9 @@ func installWindsurf(handlerPath string) error {
 
 	var existingConfig map[string]any
 	if data, err := os.ReadFile(hooksFile); err == nil {
-		json.Unmarshal(data, &existingConfig)
+		if err := json.Unmarshal(data, &existingConfig); err != nil {
+			existingConfig = nil
+		}
 	}
 
 	newHooksJSON, err := GenerateWindsurfHooksJSON(handlerPath)
@@ -835,7 +875,9 @@ func installWindsurf(handlerPath string) error {
 	}
 
 	var newConfig map[string]any
-	json.Unmarshal([]byte(newHooksJSON), &newConfig)
+	if err := json.Unmarshal([]byte(newHooksJSON), &newConfig); err != nil {
+		return fmt.Errorf("failed to parse generated hooks config: %w", err)
+	}
 
 	if existingConfig != nil {
 		if existingHooks, ok := existingConfig["hooks"].(map[string]any); ok {
@@ -867,15 +909,38 @@ func uninstallWindsurf() error {
 	dir, _ := getWindsurfHooksDir(home)
 	hooksFile := filepath.Join(dir, "hooks.json")
 
-	if _, err := os.Stat(hooksFile); os.IsNotExist(err) {
+	data, err := os.ReadFile(hooksFile)
+	if os.IsNotExist(err) {
 		return fmt.Errorf("no hooks.json found at %s", dir)
 	}
-
-	if err := os.Remove(hooksFile); err != nil {
-		return fmt.Errorf("failed to remove hooks.json: %w", err)
+	if err != nil {
+		return err
 	}
 
-	return nil
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		return err
+	}
+
+	if hooks, ok := config["hooks"].(map[string]any); ok {
+		cleanedHooks := removeIntentraHooksFromMap(hooks)
+		if len(cleanedHooks) > 0 {
+			config["hooks"] = cleanedHooks
+		} else {
+			delete(config, "hooks")
+		}
+	}
+
+	if hooks, ok := config["hooks"].(map[string]any); !ok || len(hooks) == 0 {
+		return os.Remove(hooksFile)
+	}
+
+	newData, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(hooksFile, newData, 0600)
 }
 
 // --- Legacy compatibility ---

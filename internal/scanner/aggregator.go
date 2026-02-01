@@ -4,9 +4,11 @@
 package scanner
 
 import (
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/atbabers/intentra-cli/pkg/models"
@@ -96,6 +98,10 @@ func createScan(conversationID string, events []models.Event) models.Scan {
 	scan.TotalTokens = scan.InputTokens + scan.OutputTokens + scan.ThinkingTokens
 	scan.EstimatedCost = estimateCost(scan.TotalTokens, getModel(events))
 
+	scan.Fingerprint = calculateFingerprint(events)
+	scan.FilesHash = calculateFilesHash(events)
+	scan.ActionCounts = calculateActionCounts(events)
+
 	return scan
 }
 
@@ -115,6 +121,82 @@ func estimateCost(tokens int, model string) float64 {
 		}
 	}
 	return float64(tokens) / 1000.0 * 0.003
+}
+
+func calculateFingerprint(events []models.Event) string {
+	var prompts []string
+	for _, e := range events {
+		if e.Prompt != "" {
+			normalized := strings.ToLower(strings.TrimSpace(e.Prompt))
+			if len(normalized) > 100 {
+				normalized = normalized[:100]
+			}
+			if normalized != "" {
+				prompts = append(prompts, normalized)
+			}
+		}
+	}
+
+	if len(prompts) == 0 {
+		return ""
+	}
+
+	sort.Strings(prompts)
+	combined := strings.Join(prompts, "|")
+	hash := md5.Sum([]byte(combined))
+	return hex.EncodeToString(hash[:])[:16]
+}
+
+func calculateFilesHash(events []models.Event) string {
+	fileSet := make(map[string]bool)
+	for _, e := range events {
+		if e.FilePath != "" {
+			fileSet[strings.ToLower(e.FilePath)] = true
+		}
+	}
+
+	if len(fileSet) == 0 {
+		return ""
+	}
+
+	var files []string
+	for f := range fileSet {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+
+	combined := strings.Join(files, "|")
+	hash := md5.Sum([]byte(combined))
+	return hex.EncodeToString(hash[:])[:8]
+}
+
+func calculateActionCounts(events []models.Event) map[string]int {
+	counts := map[string]int{
+		"edits":  0,
+		"reads":  0,
+		"shell":  0,
+		"failed": 0,
+	}
+
+	editTypes := map[string]bool{"after_file_edit": true, "before_file_edit": true}
+	readTypes := map[string]bool{"after_file_read": true, "before_file_read": true}
+	shellTypes := map[string]bool{"after_shell": true, "before_shell": true}
+
+	for _, e := range events {
+		if editTypes[e.NormalizedType] {
+			counts["edits"]++
+		} else if readTypes[e.NormalizedType] {
+			counts["reads"]++
+		} else if shellTypes[e.NormalizedType] {
+			counts["shell"]++
+		}
+
+		if e.Error != "" {
+			counts["failed"]++
+		}
+	}
+
+	return counts
 }
 
 // CreateScanFromEvent creates a scan from a single event for immediate sync.
@@ -158,6 +240,12 @@ func CreateScanFromEvent(event models.Event) *models.Scan {
 		model = "claude-3-5-sonnet"
 	}
 	scan.EstimatedCost = estimateCost(scan.TotalTokens, model)
+
+	// Calculate cross-scan detection metadata
+	events := []models.Event{event}
+	scan.Fingerprint = calculateFingerprint(events)
+	scan.FilesHash = calculateFilesHash(events)
+	scan.ActionCounts = calculateActionCounts(events)
 
 	return scan
 }

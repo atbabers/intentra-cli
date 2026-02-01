@@ -14,6 +14,9 @@ import (
 
 // Config represents the intentra configuration.
 type Config struct {
+	// Debug mode enables HTTP request logging and local scan saving
+	Debug bool `mapstructure:"debug"`
+
 	// Server sync configuration (optional - for team deployments)
 	Server ServerConfig `mapstructure:"server"`
 
@@ -102,6 +105,7 @@ type LogConfig struct {
 func DefaultConfig() *Config {
 	dataDir := GetDataDir()
 	return &Config{
+		Debug: false,
 		Server: ServerConfig{
 			Enabled:  false,
 			Endpoint: "",
@@ -123,7 +127,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Buffer: BufferConfig{
-			Enabled:        true,
+			Enabled:        false,
 			Path:           filepath.Join(dataDir, "buffer.db"),
 			MaxSizeMB:      50,
 			MaxAgeHours:    24,
@@ -297,6 +301,9 @@ func (c *Config) Print() {
 	fmt.Println("=== Intentra Configuration ===")
 	fmt.Println()
 
+	fmt.Printf("Debug: %v\n", c.Debug)
+	fmt.Println()
+
 	fmt.Println("Server Sync:")
 	fmt.Printf("  Enabled: %v\n", c.Server.Enabled)
 	if c.Server.Enabled {
@@ -337,6 +344,9 @@ func (c *Config) Print() {
 func PrintSample() {
 	sample := `# Intentra Configuration
 # ~/.intentra/config.yaml
+
+# Debug mode (logs HTTP requests, saves scans locally)
+debug: false
 
 # Server sync (optional - for team deployments)
 server:
@@ -394,6 +404,56 @@ logging:
   format: text   # text, json
 `
 	fmt.Print(sample)
+}
+
+// GetConfigPath returns the path to the config file.
+func GetConfigPath() string {
+	return filepath.Join(GetConfigDir(), "config.yaml")
+}
+
+// ConfigExists returns true if the config file exists.
+func ConfigExists() bool {
+	_, err := os.Stat(GetConfigPath())
+	return err == nil
+}
+
+// SaveConfig writes the configuration to the config file.
+// It preserves existing values and only updates specified fields.
+func SaveConfig(cfg *Config) error {
+	configPath := GetConfigPath()
+
+	if err := os.MkdirAll(GetConfigDir(), 0700); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	v := viper.New()
+	v.SetConfigType("yaml")
+
+	if _, err := os.Stat(configPath); err == nil {
+		v.SetConfigFile(configPath)
+		if err := v.ReadInConfig(); err != nil {
+			v = viper.New()
+			v.SetConfigType("yaml")
+		}
+	}
+
+	v.Set("debug", cfg.Debug)
+	v.Set("server.enabled", cfg.Server.Enabled)
+	v.Set("server.endpoint", cfg.Server.Endpoint)
+	v.Set("server.timeout", cfg.Server.Timeout.String())
+	v.Set("server.auth.mode", cfg.Server.Auth.Mode)
+	v.Set("local.model", cfg.Local.Model)
+	v.Set("local.scan_timeout", cfg.Local.ScanTimeout)
+	v.Set("local.min_events_per_scan", cfg.Local.MinEventsPerScan)
+	v.Set("local.chars_per_token", cfg.Local.CharsPerToken)
+	v.Set("local.archive.enabled", cfg.Local.Archive.Enabled)
+	v.Set("local.archive.path", cfg.Local.Archive.Path)
+	v.Set("local.archive.redacted", cfg.Local.Archive.Redacted)
+	v.Set("local.archive.include_events", cfg.Local.Archive.IncludeEvents)
+	v.Set("logging.level", cfg.Log.Level)
+	v.Set("logging.format", cfg.Log.Format)
+
+	return v.WriteConfigAs(configPath)
 }
 
 // --- Legacy compatibility ---

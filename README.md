@@ -30,7 +30,7 @@ intentra hooks status
 intentra scan list
 ```
 
-All scans are stored locally at `~/.local/share/intentra/scans/`.
+All scans are stored locally at `~/.intentra/scans/`.
 
 ## Commands
 
@@ -49,15 +49,22 @@ All scans are stored locally at `~/.local/share/intentra/scans/`.
 | `intentra config init` | Generate sample config |
 | `intentra config validate` | Validate configuration |
 
+### Global Options
+
+| Option | Description |
+|--------|-------------|
+| `--debug, -d` | Enable debug output (HTTP requests, local scan saves) |
+| `--config, -c` | Config file path (default: ~/.intentra/config.yaml) |
+
 ## Supported Tools
 
-| Tool | Status | Hook Format |
-|------|--------|-------------|
-| Cursor | Supported | camelCase |
-| Claude Code | Supported | PascalCase |
-| GitHub Copilot | Supported | camelCase |
-| Windsurf | Supported | snake_case |
-| Gemini CLI | Supported | PascalCase |
+| Tool | Status |
+|------|--------|
+| Cursor | Supported |
+| Claude Code | Supported |
+| GitHub Copilot | Supported |
+| Windsurf | Supported |
+| Gemini CLI | Supported |
 
 ## Event Normalization
 
@@ -76,9 +83,41 @@ Key normalized event types:
 
 See `internal/hooks/normalizer.go` for the full list of normalized types.
 
+## Debug Mode
+
+Enable debug mode to see HTTP requests and save scans locally:
+
+**Using the -d flag:**
+```bash
+intentra -d status
+intentra -d scan list
+```
+
+**Using config (persists for hooks):**
+```yaml
+# ~/.intentra/config.yaml
+debug: true
+```
+
+When debug mode is enabled:
+- HTTP requests are logged with status codes: `[DEBUG] POST https://api.intentra.sh/scans -> 200`
+- Scans are saved locally to `~/.intentra/scans/` regardless of sync status
+
+Note: Using `-d` automatically sets `debug: true` in the config file.
+
+## Local Storage
+
+Scans and data are stored in `~/.intentra/`:
+
+| Path | Description |
+|------|-------------|
+| `~/.intentra/scans/` | Locally saved scans (when debug enabled) |
+| `~/.intentra/config.yaml` | Configuration file |
+| `~/.intentra/credentials.json` | Auth credentials (after `intentra login`) |
+
 ## Configuration
 
-Configuration file location: `~/.config/intentra/config.yaml`
+Configuration file location: `~/.intentra/config.yaml`
 
 ### Local-Only Mode (Default)
 
@@ -101,31 +140,6 @@ server:
       key_id: "your-key-id"
       secret: "your-secret"
 ```
-
-## SaaS Features (intentra.sh)
-
-When connected to [intentra.sh](https://intentra.sh), you get access to additional features not available in local-only mode:
-
-### Free Tier
-- 100 scans/month synced to cloud
-- Basic web dashboard
-- Email notifications (daily summary, violations)
-
-### Pro Tier ($20/mo)
-- Unlimited scans
-- **AI Efficiency Insights** - productivity metrics, benchmarks, forecasting
-- **Custom Webhooks** - send notifications to Slack, Discord, or any URL
-- **Weekly Digest** - optimization tips delivered to your inbox
-- Export evidence for refund claims
-
-### Enterprise
-- Team analytics dashboard
-- **Audit Logs** - track all UI actions for compliance
-- **Audit Log Streaming** - send audit events to your SIEM via webhook
-- SSO & RBAC
-- SLA & priority support
-
-See [intentra.sh/pricing](https://intentra.sh/#pricing) for full details.
 
 ## Documentation
 

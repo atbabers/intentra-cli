@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/atbabers/intentra-cli/internal/api"
+	"github.com/atbabers/intentra-cli/internal/debug"
 	"github.com/atbabers/intentra-cli/internal/scanner"
 	"github.com/atbabers/intentra-cli/pkg/models"
 	"github.com/spf13/cobra"
@@ -22,7 +23,10 @@ func newSyncNowCmd() *cobra.Command {
 		Long: `Sync all pending scans to the server and clean up local files.
 
 By default, local scan files are deleted after successful sync since
-the server is the source of truth. Use --keep-local to preserve files.`,
+the server is the source of truth. Use --keep-local to preserve files.
+
+Local scan files are automatically preserved when debug mode is enabled
+(-d flag, debug: true in config, or INTENTRA_DEBUG=true).`,
 		RunE: runSyncNow,
 	}
 
@@ -79,14 +83,19 @@ func runSyncNow(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✓ Successfully synced %d scans\n", len(pending))
 
-	if keepLocal {
+	preserveLocal := keepLocal || debug.Enabled
+	if preserveLocal {
 		for _, scan := range pending {
 			scan.Status = models.ScanStatusReviewed
 			if err := scanner.SaveScan(scan); err != nil {
 				fmt.Printf("Warning: failed to update scan %s status: %v\n", scan.ID, err)
 			}
 		}
-		fmt.Println("Local scan files preserved (--keep-local)")
+		if debug.Enabled {
+			fmt.Println("Local scan files preserved (debug mode)")
+		} else {
+			fmt.Println("Local scan files preserved (--keep-local)")
+		}
 	} else {
 		var deleted int
 		for _, scan := range pending {

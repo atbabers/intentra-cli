@@ -51,7 +51,8 @@ func quotePathForShell(path string) string {
 
 // CursorHookConfig represents Cursor's hooks.json structure.
 type CursorHookConfig struct {
-	Hooks map[string][]CursorHookEntry `json:"hooks"`
+	Version int                          `json:"version"`
+	Hooks   map[string][]CursorHookEntry `json:"hooks"`
 }
 
 type CursorHookEntry struct {
@@ -74,20 +75,20 @@ type ClaudeHookEntry struct {
 	} `json:"hooks"`
 }
 
-// cursorHookTypes contains all available hooks per https://cursor.com/docs/agent/hooks.
+// cursorHookTypes contains all available hooks per https://docs.cursor.com/context/hooks.
 var cursorHookTypes = []string{
-	// Agent hooks (Cmd+K/Agent Chat)
-	"beforeSubmitPrompt",
-	"afterAgentThought",
-	"afterAgentResponse",
+	"sessionStart",
+	"sessionEnd",
+	"preToolUse",
+	"postToolUse",
+	"subagentStart",
+	"subagentStop",
 	"beforeShellExecution",
 	"afterShellExecution",
-	"beforeMCPExecution",
 	"afterMCPExecution",
-	"beforeReadFile",
 	"afterFileEdit",
+	"preCompact",
 	"stop",
-	// Tab hooks (Inline Completions)
 	"beforeTabFileRead",
 	"afterTabFileEdit",
 }
@@ -101,7 +102,8 @@ func GenerateCursorHooksJSON(handlerPath string) (string, error) {
 	}
 
 	config := CursorHookConfig{
-		Hooks: make(map[string][]CursorHookEntry),
+		Version: 1,
+		Hooks:   make(map[string][]CursorHookEntry),
 	}
 
 	for _, hookType := range cursorHookTypes {

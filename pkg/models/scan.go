@@ -37,6 +37,8 @@ type Scan struct {
 	Tool           string       `json:"tool,omitempty"`
 	Timestamp      string       `json:"timestamp,omitempty"`
 	ConversationID string       `json:"conversation_id,omitempty"`
+	GenerationID   string       `json:"generation_id,omitempty"`
+	Model          string       `json:"model,omitempty"`
 	Status         ScanStatus   `json:"status,omitempty"`
 	StartTime      time.Time    `json:"start_time,omitempty"`
 	EndTime        time.Time    `json:"end_time,omitempty"`
@@ -60,6 +62,11 @@ type Scan struct {
 
 	// Raw hook events for violation detection
 	RawEvents []map[string]any `json:"raw_events,omitempty"`
+
+	// Cross-scan detection metadata (Pro/Enterprise)
+	Fingerprint  string         `json:"fingerprint,omitempty"`
+	FilesHash    string         `json:"files_hash,omitempty"`
+	ActionCounts map[string]int `json:"action_counts,omitempty"`
 }
 
 // Duration returns the scan duration.

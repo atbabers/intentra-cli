@@ -20,6 +20,7 @@ type Event struct {
 	ScanID         string    `json:"scan_id,omitempty"`
 	ConversationID string    `json:"conversation_id"`
 	SessionID      string    `json:"session_id,omitempty"`
+	GenerationID   string    `json:"generation_id,omitempty"`
 	Model          string    `json:"model,omitempty"`
 	UserEmail      string    `json:"user_email,omitempty"`
 	DeviceID       string    `json:"device_id,omitempty"`
@@ -41,6 +42,9 @@ type Event struct {
 	OutputTokens   int `json:"output_tokens,omitempty"`
 	ThinkingTokens int `json:"thinking_tokens,omitempty"`
 	DurationMs     int `json:"duration_ms,omitempty"`
+
+	// Error tracking
+	Error string `json:"error,omitempty"`
 }
 
 // EstimateTokens estimates tokens from text length.

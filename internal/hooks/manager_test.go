@@ -15,8 +15,11 @@ func TestGenerateHooksJSON(t *testing.T) {
 	if json == "" {
 		t.Error("GenerateCursorHooksJSON returned empty string")
 	}
-	if !contains(json, "beforeSubmitPrompt") {
-		t.Error("Missing beforeSubmitPrompt hook")
+	if !contains(json, "sessionStart") {
+		t.Error("Missing sessionStart hook")
+	}
+	if !contains(json, "\"version\": 1") {
+		t.Error("Missing version field")
 	}
 
 	// Test Claude Code hooks with valid path

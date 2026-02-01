@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+echo "Running pre-commit checks..."
+
+if command -v golangci-lint >/dev/null 2>&1; then
+    echo "Running golangci-lint..."
+    golangci-lint run ./...
+else
+    echo "golangci-lint not installed, running go vet..."
+    go vet ./...
+fi
+
+echo "Running go fmt check..."
+UNFORMATTED=$(gofmt -l .)
+if [ -n "$UNFORMATTED" ]; then
+    echo "Error: The following files are not formatted:"
+    echo "$UNFORMATTED"
+    echo "Run 'make fmt' to fix"
+    exit 1
+fi
+
+echo "Pre-commit checks passed"

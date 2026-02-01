@@ -1,4 +1,4 @@
-.PHONY: all build test lint clean install intentra coverage help
+.PHONY: all build test lint clean install intentra coverage help setup-hooks
 
 BINARY_NAME=intentra
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -45,17 +45,23 @@ snapshot:
 release:
 	goreleaser release --clean
 
+setup-hooks:
+	cp scripts/pre-commit .git/hooks/pre-commit
+	chmod +x .git/hooks/pre-commit
+	@echo "✓ Git pre-commit hook installed"
+
 help:
 	@echo "Available targets:"
-	@echo "  all       - Run lint, test, and build"
-	@echo "  build     - Build the binary"
-	@echo "  install   - Install to GOPATH/bin"
-	@echo "  intentra  - Build and install to ~/bin/intentra"
-	@echo "  test      - Run tests"
-	@echo "  coverage  - Run tests with coverage"
-	@echo "  lint      - Run linter"
-	@echo "  fmt       - Format code"
-	@echo "  clean     - Remove build artifacts"
-	@echo "  snapshot  - Create snapshot release"
-	@echo "  release   - Create release (requires GITHUB_TOKEN)"
-	@echo "  help      - Show this help"
+	@echo "  all         - Run lint, test, and build"
+	@echo "  build       - Build the binary"
+	@echo "  install     - Install to GOPATH/bin"
+	@echo "  intentra    - Build and install to ~/bin/intentra"
+	@echo "  test        - Run tests"
+	@echo "  coverage    - Run tests with coverage"
+	@echo "  lint        - Run linter"
+	@echo "  fmt         - Format code"
+	@echo "  clean       - Remove build artifacts"
+	@echo "  setup-hooks - Install git pre-commit hook"
+	@echo "  snapshot    - Create snapshot release"
+	@echo "  release     - Create release (requires GITHUB_TOKEN)"
+	@echo "  help        - Show this help"

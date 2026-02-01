@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-01
+
+### Added
+- `--debug` (`-d`) global flag for debug output (HTTP request logging, local scan saves)
+- `debug: true` config option for persistent debug mode (works for hooks called by IDEs)
+- New `internal/debug` package with `Log`, `LogHTTP`, and `Warn` functions
+- HTTP request logging showing method, URL, and status code in debug mode
+- Local scan persistence to `~/.intentra/scans/` when debug mode enabled
+- Config file auto-generation on first run with defaults
+- `SaveConfig` function in config package for persisting configuration changes
+- `ConfigExists` and `GetConfigPath` helper functions
+- Cross-scan pattern detection support (Pro/Enterprise feature):
+  - Scan fingerprint calculation for duplicate task detection
+  - Files hash aggregation for cross-scan retry detection
+  - Action counts (edits, reads, shell, failed) for session analysis
+- New scan payload fields: `fingerprint`, `files_hash`, `action_counts`
+- `GenerationID` field on Event and Scan models for turn/execution tracking
+- `Model` field on Scan model for model identification
+- `Error` field on Event model for error tracking
+- `scripts/pre-commit` hook for development
+
+### Changed
+- **Breaking**: Config file location changed from `~/.config/intentra/config.yaml` to `~/.intentra/config.yaml`
+- **Breaking**: Scans location changed from `~/.local/share/intentra/scans/` to `~/.intentra/scans/`
+- **Breaking**: Gemini CLI hooks now use matcher-based format with named hooks and timeouts
+- Using `-d` flag now persists `debug: true` to config file automatically
+- Hooks now check for valid JWT credentials first, then fall back to config-based auth
+- Logged-in users (`intentra login`) now automatically sync to api.intentra.sh
+- Cursor hooks directory changed from `~/.cursor/hooks/` to `~/.cursor/`
+- Buffer feature disabled by default (`buffer.enabled: false`)
+- Uninstall commands now preserve non-intentra hooks instead of deleting entire hooks.json
+- Claude Code uninstall now preserves non-intentra hooks
+- Gemini CLI uninstall now preserves non-intentra hooks using matcher-aware removal
+- Copilot uninstall now preserves non-intentra hooks
+- Windsurf uninstall now preserves non-intentra hooks
+- Scan model extended with cross-scan detection metadata
+- Aggregator now calculates fingerprint hashes during scan creation
+- Hook handler now uses `generation_id` from raw events (maps `execution_id`, `turn_id`)
+- Improved JSON unmarshal error handling in hook installation
+
+### Fixed
+- `intentra login` now enables data syncing (hooks check JWT credentials before server.enabled)
+- Scans are synced to api.intentra.sh when logged in, even without server.enabled in config
+- Sync command now preserves local files when debug mode is enabled
+- Model extracted from events and set on scan correctly (was always defaulting)
+
 ## [0.2.0] - 2026-01-26
 
 ### Added
@@ -110,6 +156,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.3.0]: https://github.com/atbabers/intentra-cli/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/atbabers/intentra-cli/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/atbabers/intentra-cli/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/atbabers/intentra-cli/compare/v0.1.1...v0.1.2
