@@ -2,7 +2,6 @@ package hooks
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 
 	"github.com/atbabers/intentra-cli/internal/config"
@@ -26,11 +25,8 @@ func TestProcessEvent_ParsesEvent(t *testing.T) {
 	stopInput := `{"conversation_id": "test-123"}`
 	stopReader := bytes.NewBufferString(stopInput)
 	err = ProcessEventWithEvent(stopReader, cfg, "cursor", "stop")
-	if err == nil {
-		t.Error("Expected error due to non-existent API endpoint")
-	}
-	if err != nil && !strings.Contains(err.Error(), "failed") {
-		t.Errorf("Expected failure error, got: %v", err)
+	if err != nil {
+		t.Errorf("Unexpected error on stop event: %v", err)
 	}
 }
 
@@ -48,7 +44,7 @@ func TestRunHookHandlerWithTool_RequiresConfig(t *testing.T) {
 	cfg.Server.Endpoint = ""
 	validInput := bytes.NewBufferString(`{"conversation_id": "test"}`)
 	err = ProcessEventWithEvent(validInput, cfg, "cursor", "stop")
-	if err == nil {
-		t.Error("Expected error when endpoint not configured")
+	if err != nil {
+		t.Errorf("Should not error with empty endpoint (fails silently), got: %v", err)
 	}
 }

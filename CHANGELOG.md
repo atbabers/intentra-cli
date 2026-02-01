@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-02-01
+
+### Added
+- Test coverage for `internal/debug` package (Log, LogHTTP, Warn functions)
+- Test coverage for `internal/device` package (GetDeviceID, VerifyDeviceID, GetMetadata)
+- Tests for new Event fields (GenerationID, Error)
+- Tests for EstimateTokens function with table-driven test cases
+- Tests for Scan model with cross-scan detection fields (fingerprint, files_hash, action_counts)
+
+### Changed
+- Handler tests updated to match new resilient sync behavior (warnings instead of errors)
+
 ## [0.3.0] - 2026-02-01
 
 ### Added
@@ -156,6 +168,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.3.5]: https://github.com/atbabers/intentra-cli/compare/v0.3.0...v0.3.5
 [0.3.0]: https://github.com/atbabers/intentra-cli/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/atbabers/intentra-cli/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/atbabers/intentra-cli/compare/v0.1.2...v0.1.3
