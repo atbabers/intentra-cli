@@ -61,6 +61,7 @@ tracks usage metrics, and optionally syncs data to a central server.`,
 	rootCmd.AddCommand(newLoginCmd())
 	rootCmd.AddCommand(newLogoutCmd())
 	rootCmd.AddCommand(newStatusCmd())
+	rootCmd.AddCommand(newExtensionInfoCmd())
 
 	var hookTool string
 	var hookEvent string

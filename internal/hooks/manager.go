@@ -158,6 +158,16 @@ func Status() []ToolStatus {
 	return statuses
 }
 
+// AnyHooksInstalled returns true if hooks are installed for any tool.
+func AnyHooksInstalled() bool {
+	for _, status := range Status() {
+		if status.Installed {
+			return true
+		}
+	}
+	return false
+}
+
 func checkStatus(tool Tool) (bool, string, error) {
 	dir, err := GetHooksDir(tool)
 	if err != nil {
