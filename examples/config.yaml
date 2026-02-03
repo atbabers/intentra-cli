@@ -1,15 +1,21 @@
+# Example: Enterprise API Key Authentication
+# For programmatic access, Enterprise organizations can generate API keys
+# in Settings > API Keys on the web dashboard.
+#
+# For most users, we recommend using 'intentra login' instead.
+
 server:
   enabled: true
-  endpoint: "https://api.example.com/v1"
+  endpoint: "https://api.intentra.sh"
   timeout: 30s
   auth:
-    mode: "hmac"
-    hmac:
-      key_id: "your-key-id"
-      secret: "your-secret"
-      device_id: ""
+    mode: "api_key"
+    api_key:
+      key_id: "${INTENTRA_API_KEY_ID}"
+      secret: "${INTENTRA_API_SECRET}"
 
 buffer:
-  path: "~/.local/share/intentra/buffer"
-  max_size: 1000
-  flush_interval: 60s
+  enabled: true
+  path: "~/.intentra/buffer.db"
+  max_size_mb: 50
+  flush_interval: 30s

@@ -207,10 +207,10 @@ func loadConfig() (*config.Config, error) {
 		cfg.Server.Endpoint = apiServer
 	}
 	if apiKeyID != "" {
-		cfg.Server.Auth.HMAC.KeyID = apiKeyID
+		cfg.Server.Auth.APIKey.KeyID = apiKeyID
 	}
 	if apiSecret != "" {
-		cfg.Server.Auth.HMAC.Secret = apiSecret
+		cfg.Server.Auth.APIKey.Secret = apiSecret
 	}
 
 	return cfg, nil

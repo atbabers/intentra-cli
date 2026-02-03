@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-02
+
+### Changed
+- **Breaking**: Removed HMAC signature authentication mode
+- **Breaking**: Removed mTLS certificate authentication mode
+- Simplified `AuthConfig` struct to only support `api_key` mode (or JWT via `intentra login`)
+- Default auth mode is now empty string (uses JWT from `intentra login`)
+- Updated README with Windows PowerShell installation instructions
+- Updated example configs to reflect new `api_key` auth format
+- Simplified API client by removing HMAC signing and mTLS configuration code
+
+### Removed
+- `HMACConfig` struct from config package
+- `MTLSConfig` struct from config package
+- `examples/config-mtls.yaml` example file
+- HMAC signature generation (`signRequest`, `setAuthHeaders`) from API client
+- mTLS certificate loading (`configureMTLS`) from API client
+
 ## [0.3.5] - 2026-02-01
 
 ### Added
@@ -168,6 +186,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.4.0]: https://github.com/atbabers/intentra-cli/compare/v0.3.5...v0.4.0
 [0.3.5]: https://github.com/atbabers/intentra-cli/compare/v0.3.0...v0.3.5
 [0.3.0]: https://github.com/atbabers/intentra-cli/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/atbabers/intentra-cli/compare/v0.1.3...v0.2.0

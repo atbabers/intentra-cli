@@ -40,31 +40,15 @@ type ServerConfig struct {
 
 // AuthConfig contains authentication settings.
 type AuthConfig struct {
-	Mode   string       `mapstructure:"mode"` // hmac, api_key, mtls
-	HMAC   HMACConfig   `mapstructure:"hmac"`
+	Mode   string       `mapstructure:"mode"` // api_key (or use 'intentra login' for JWT)
 	APIKey APIKeyConfig `mapstructure:"api_key"`
-	MTLS   MTLSConfig   `mapstructure:"mtls"`
 }
 
-// HMACConfig contains HMAC authentication settings.
-type HMACConfig struct {
-	KeyID    string `mapstructure:"key_id"`    // API key identifier for server auth
-	DeviceID string `mapstructure:"device_id"` // Device ID (auto-generated if empty)
-	Secret   string `mapstructure:"secret"`    // Shared secret for HMAC signature
-}
-
-// APIKeyConfig contains API key authentication settings.
+// APIKeyConfig contains API key authentication settings for Enterprise organizations.
+// The secret is sent directly to the server and verified using bcrypt.
 type APIKeyConfig struct {
-	KeyID  string `mapstructure:"key_id"`
-	Secret string `mapstructure:"secret"`
-}
-
-// MTLSConfig contains mTLS certificate settings for JAMF/MDM deployments.
-type MTLSConfig struct {
-	CertFile   string `mapstructure:"cert_file"`   // Client certificate path
-	KeyFile    string `mapstructure:"key_file"`    // Client private key path
-	CAFile     string `mapstructure:"ca_file"`     // CA certificate for server verification
-	SkipVerify bool   `mapstructure:"skip_verify"` // Skip server cert verification (dev only)
+	KeyID  string `mapstructure:"key_id"` // API key identifier from Settings > API Keys
+	Secret string `mapstructure:"secret"` // API key secret (shown once at creation)
 }
 
 // LocalConfig contains local-only settings.
@@ -111,7 +95,7 @@ func DefaultConfig() *Config {
 			Endpoint: "",
 			Timeout:  30 * time.Second,
 			Auth: AuthConfig{
-				Mode: "hmac",
+				Mode: "",
 			},
 		},
 		Local: LocalConfig{
@@ -190,19 +174,16 @@ func Load() (*Config, error) {
 	}
 
 	// Expand environment variables in sensitive fields
-	cfg.Server.Auth.HMAC.KeyID = os.ExpandEnv(cfg.Server.Auth.HMAC.KeyID)
-	cfg.Server.Auth.HMAC.DeviceID = os.ExpandEnv(cfg.Server.Auth.HMAC.DeviceID)
-	cfg.Server.Auth.HMAC.Secret = os.ExpandEnv(cfg.Server.Auth.HMAC.Secret)
 	cfg.Server.Auth.APIKey.KeyID = os.ExpandEnv(cfg.Server.Auth.APIKey.KeyID)
 	cfg.Server.Auth.APIKey.Secret = os.ExpandEnv(cfg.Server.Auth.APIKey.Secret)
 	cfg.Local.AnthropicAPIKey = os.ExpandEnv(cfg.Local.AnthropicAPIKey)
 
-	// Environment variable overrides for HMAC auth
+	// Environment variable overrides for API key auth
 	if keyID := os.Getenv("INTENTRA_API_KEY_ID"); keyID != "" {
-		cfg.Server.Auth.HMAC.KeyID = keyID
+		cfg.Server.Auth.APIKey.KeyID = keyID
 	}
 	if secret := os.Getenv("INTENTRA_API_SECRET"); secret != "" {
-		cfg.Server.Auth.HMAC.Secret = secret
+		cfg.Server.Auth.APIKey.Secret = secret
 	}
 
 	// ANTHROPIC_API_KEY env takes precedence for local analysis
@@ -246,17 +227,16 @@ func LoadWithFile(cfgFile string) (*Config, error) {
 	}
 
 	// Expand environment variables
-	cfg.Server.Auth.HMAC.KeyID = os.ExpandEnv(cfg.Server.Auth.HMAC.KeyID)
-	cfg.Server.Auth.HMAC.DeviceID = os.ExpandEnv(cfg.Server.Auth.HMAC.DeviceID)
-	cfg.Server.Auth.HMAC.Secret = os.ExpandEnv(cfg.Server.Auth.HMAC.Secret)
+	cfg.Server.Auth.APIKey.KeyID = os.ExpandEnv(cfg.Server.Auth.APIKey.KeyID)
+	cfg.Server.Auth.APIKey.Secret = os.ExpandEnv(cfg.Server.Auth.APIKey.Secret)
 	cfg.Local.AnthropicAPIKey = os.ExpandEnv(cfg.Local.AnthropicAPIKey)
 
 	// Environment variable overrides
 	if keyID := os.Getenv("INTENTRA_API_KEY_ID"); keyID != "" {
-		cfg.Server.Auth.HMAC.KeyID = keyID
+		cfg.Server.Auth.APIKey.KeyID = keyID
 	}
 	if secret := os.Getenv("INTENTRA_API_SECRET"); secret != "" {
-		cfg.Server.Auth.HMAC.Secret = secret
+		cfg.Server.Auth.APIKey.Secret = secret
 	}
 
 	return cfg, nil
@@ -265,7 +245,7 @@ func LoadWithFile(cfgFile string) (*Config, error) {
 // Validate checks if the configuration is valid for server sync.
 func (c *Config) Validate() error {
 	if !c.Server.Enabled {
-		return nil // Local-only mode, no validation needed
+		return nil
 	}
 
 	if c.Server.Endpoint == "" {
@@ -273,24 +253,14 @@ func (c *Config) Validate() error {
 	}
 
 	switch c.Server.Auth.Mode {
-	case "hmac":
-		// Device ID is auto-generated if not provided, key_id and secret are required
-		if c.Server.Auth.HMAC.KeyID == "" {
-			return fmt.Errorf("hmac auth requires key_id")
-		}
-		if c.Server.Auth.HMAC.Secret == "" {
-			return fmt.Errorf("hmac auth requires secret")
-		}
 	case "api_key":
 		if c.Server.Auth.APIKey.KeyID == "" || c.Server.Auth.APIKey.Secret == "" {
 			return fmt.Errorf("api_key auth requires key_id and secret")
 		}
-	case "mtls":
-		if c.Server.Auth.MTLS.CertFile == "" || c.Server.Auth.MTLS.KeyFile == "" {
-			return fmt.Errorf("mtls auth requires cert_file and key_file")
-		}
+	case "":
+		return nil
 	default:
-		return fmt.Errorf("unknown auth mode: %s (supported: hmac, api_key, mtls)", c.Server.Auth.Mode)
+		return fmt.Errorf("unknown auth mode: %s (supported: api_key, or use 'intentra login' for JWT)", c.Server.Auth.Mode)
 	}
 
 	return nil
@@ -309,10 +279,14 @@ func (c *Config) Print() {
 	if c.Server.Enabled {
 		fmt.Printf("  Endpoint: %s\n", c.Server.Endpoint)
 		fmt.Printf("  Timeout: %s\n", c.Server.Timeout)
-		fmt.Printf("  Auth Mode: %s\n", c.Server.Auth.Mode)
-		if c.Server.Auth.Mode == "hmac" {
-			fmt.Printf("  Device ID: %s\n", c.Server.Auth.HMAC.DeviceID)
-			if c.Server.Auth.HMAC.Secret != "" {
+		if c.Server.Auth.Mode != "" {
+			fmt.Printf("  Auth Mode: %s\n", c.Server.Auth.Mode)
+		} else {
+			fmt.Printf("  Auth Mode: jwt (via 'intentra login')\n")
+		}
+		if c.Server.Auth.Mode == "api_key" {
+			fmt.Printf("  Key ID: %s\n", c.Server.Auth.APIKey.KeyID)
+			if c.Server.Auth.APIKey.Secret != "" {
 				fmt.Printf("  Secret: [REDACTED]\n")
 			}
 		}
@@ -348,31 +322,22 @@ func PrintSample() {
 # Debug mode (logs HTTP requests, saves scans locally)
 debug: false
 
-# Server sync (optional - for team deployments)
+# Server sync (for team deployments)
+# Most users should use 'intentra login' instead of configuring auth here.
 server:
   enabled: false
-  endpoint: "https://api.intentra.example.com/v1"
+  endpoint: "https://api.intentra.sh"
   timeout: 30s
   auth:
-    mode: "hmac"  # hmac, api_key, or mtls
+    # Auth mode: api_key
+    # Leave mode empty to use JWT from 'intentra login' (recommended)
+    mode: ""
 
-    # HMAC authentication (default - device ID auto-generated from hardware)
-    hmac:
-      key_id: "${INTENTRA_API_KEY_ID}"  # API key identifier from server
-      device_id: ""                      # Leave empty for auto-generated HMAC device ID
-      secret: "${INTENTRA_API_SECRET}"   # Shared secret for HMAC signature
-
-    # API key authentication
+    # API key authentication (Enterprise only)
+    # Generate keys in Settings > API Keys on the web dashboard
     # api_key:
-    #   key_id: "${INTENTRA_API_KEY_ID}"
-    #   secret: "${INTENTRA_API_SECRET}"
-
-    # mTLS authentication (for JAMF/MDM deployments)
-    # mtls:
-    #   cert_file: "/etc/intentra/client.crt"   # Client certificate
-    #   key_file: "/etc/intentra/client.key"    # Client private key
-    #   ca_file: "/etc/intentra/ca.crt"         # CA certificate (optional)
-    #   skip_verify: false                       # Dev only
+    #   key_id: "${INTENTRA_API_KEY_ID}"   # API key ID (apk_...)
+    #   secret: "${INTENTRA_API_SECRET}"   # API key secret (intentra_sk_...)
 
 # Local settings
 local:
@@ -384,10 +349,10 @@ local:
 
   # Local scan archive (for benchmarking)
   archive:
-    enabled: false              # Enable local archiving
-    path: ~/.intentra/archive   # Directory for archived scans
-    redacted: true              # Strip prompt/response/thought content (default)
-    include_events: false       # Include redacted event list in archive
+    enabled: false
+    path: ~/.intentra/archive
+    redacted: true
+    include_events: false
 
 # Buffer for offline resilience
 buffer:
@@ -400,8 +365,8 @@ buffer:
 
 # Logging
 logging:
-  level: warn    # debug, info, warn, error
-  format: text   # text, json
+  level: warn
+  format: text
 `
 	fmt.Print(sample)
 }

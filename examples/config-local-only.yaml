@@ -1,7 +1,19 @@
+# Example: Local-Only Mode
+# All data stays on your machine. No server sync.
+
 server:
   enabled: false
 
-buffer:
-  path: "~/.local/share/intentra/buffer"
-  max_size: 5000
-  flush_interval: 0s
+local:
+  model: "claude-3-5-haiku-latest"
+  scan_timeout: 30
+
+  # Optional: Archive scans locally for benchmarking
+  archive:
+    enabled: false
+    path: ~/.intentra/archive
+    redacted: true
+
+logging:
+  level: warn
+  format: text

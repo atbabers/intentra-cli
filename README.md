@@ -6,14 +6,22 @@ Open-source monitoring tool for AI coding assistants. Captures events from Curso
 
 ## Installation
 
+**macOS/Linux:**
+
 ```bash
 curl -fsSL https://install.intentra.sh | sh
 ```
 
-Or with Homebrew:
+**Homebrew:**
 
 ```bash
 brew install atbabers/intentra/intentra
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://install.intentra.sh/install.ps1 | iex
 ```
 
 Verify installation:
@@ -128,17 +136,28 @@ server:
 
 ### Server Mode (Advanced Observability)
 
-Connect to [intentra.sh](https://intentra.sh) for dashboards, team analytics, and centralized monitoring:
+Connect to [intentra.sh](https://intentra.sh) for dashboards, team analytics, and centralized monitoring.
+
+**Recommended: Use `intentra login`**
+```bash
+intentra login
+```
+
+This uses OAuth to authenticate your device and automatically syncs data.
+
+**Enterprise: API Key Authentication**
+
+For programmatic access, Enterprise organizations can generate API keys in Settings > API Keys:
 
 ```yaml
 server:
   enabled: true
-  endpoint: "https://api.intentra.sh/v1"
+  endpoint: "https://api.intentra.sh"
   auth:
-    mode: "hmac"
-    hmac:
-      key_id: "your-key-id"
-      secret: "your-secret"
+    mode: "api_key"
+    api_key:
+      key_id: "apk_..."
+      secret: "intentra_sk_..."
 ```
 
 ## Documentation
