@@ -415,12 +415,23 @@ func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType
 		}
 	}
 
-	sessionKey := event.ConversationID
-	if sessionKey == "" {
-		sessionKey = event.SessionID
+	baseKey := event.ConversationID
+	if baseKey == "" {
+		baseKey = event.SessionID
 	}
-	if sessionKey == "" {
-		sessionKey = event.DeviceID + "_default"
+	if baseKey == "" {
+		baseKey = event.DeviceID + "_default"
+	}
+	sessionKey := tool + "_" + baseKey
+
+	if tool == "claude" {
+		cursorKey := "cursor_" + baseKey
+		cursorBufferPath := getBufferPath(cursorKey)
+		if _, err := os.Stat(cursorBufferPath); err == nil {
+			debug.Log("Claude event has matching Cursor session, treating as Cursor")
+			sessionKey = cursorKey
+			tool = "cursor"
+		}
 	}
 
 	if IsStopEvent(normalizedType) {

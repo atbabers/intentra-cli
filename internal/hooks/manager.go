@@ -214,10 +214,8 @@ func checkStatus(tool Tool) (bool, string, error) {
 		if err := json.Unmarshal(data, &settings); err != nil {
 			return false, dir, err
 		}
-		if hooks, ok := settings["hooks"].(map[string]any); ok {
-			if enabled, ok := hooks["enabled"].(bool); ok && enabled {
-				return true, dir, nil
-			}
+		if hooks, ok := settings["hooks"].(map[string]any); ok && len(hooks) > 0 {
+			return true, dir, nil
 		}
 		return false, dir, nil
 
@@ -583,9 +581,12 @@ func installGeminiCLI(handlerPath string) error {
 	quotedPath := quotePathForShell(handlerPath)
 
 	geminiEvents := []string{
-		"BeforeTool", "AfterTool",
-		"BeforeModel", "AfterModel",
 		"SessionStart", "SessionEnd",
+		"BeforeAgent", "AfterAgent",
+		"BeforeModel", "AfterModel",
+		"BeforeToolSelection",
+		"BeforeTool", "AfterTool",
+		"PreCompress", "Notification",
 	}
 
 	newHooks := make(map[string]any)

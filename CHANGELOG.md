@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-05
+
+### Added
+- Claude-to-Cursor session merging: Claude events with matching Cursor session buffers are now attributed to Cursor
+- Extended Gemini CLI event types: SessionStart, SessionEnd, BeforeAgent, AfterAgent, BeforeToolSelection, PreCompress, Notification
+
+### Changed
+- Updated CLI help text to list all supported tools (Cursor, Claude Code, Gemini CLI, GitHub Copilot, Windsurf)
+
+### Fixed
+- Cursor hooks status check now correctly detects installed hooks (was requiring `enabled: true` flag)
+
 ## [0.4.0] - 2026-02-02
 
 ### Changed
@@ -186,6 +198,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.5.0]: https://github.com/atbabers/intentra-cli/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/atbabers/intentra-cli/compare/v0.3.5...v0.4.0
 [0.3.5]: https://github.com/atbabers/intentra-cli/compare/v0.3.0...v0.3.5
 [0.3.0]: https://github.com/atbabers/intentra-cli/compare/v0.2.0...v0.3.0

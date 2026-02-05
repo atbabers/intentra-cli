@@ -1,7 +1,7 @@
 // Package main implements the intentra CLI for monitoring AI coding assistants.
 //
 // Intentra provides commands for:
-//   - Installing hooks into AI tools (Cursor, Claude Code)
+//   - Installing hooks into AI tools (Cursor, Claude Code, Gemini CLI, GitHub Copilot, Windsurf)
 //   - Managing and aggregating scan data
 //   - Syncing scans to a central server
 package main
@@ -37,7 +37,7 @@ func main() {
 		Use:     "intentra",
 		Short:   "AI coding cost tracking and usage monitoring",
 		Version: version,
-		Long: `Intentra monitors AI coding assistants (Cursor, Claude Code, Gemini CLI),
+		Long: `Intentra monitors AI coding assistants (Cursor, Claude Code, Gemini CLI, GitHub Copilot, Windsurf),
 tracks usage metrics, and optionally syncs data to a central server.`,
 	}
 
@@ -79,7 +79,7 @@ tracks usage metrics, and optionally syncs data to a central server.`,
 			return nil
 		},
 	}
-	hookCmd.Flags().StringVar(&hookTool, "tool", "", "AI tool (cursor, claude)")
+	hookCmd.Flags().StringVar(&hookTool, "tool", "", "AI tool (cursor, claude, gemini, copilot, windsurf)")
 	hookCmd.Flags().StringVar(&hookEvent, "event", "", "Hook event type")
 	rootCmd.AddCommand(hookCmd)
 
