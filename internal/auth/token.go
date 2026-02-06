@@ -124,9 +124,9 @@ func CredentialsFromTokenResponse(resp *TokenResponse) *Credentials {
 	}
 }
 
-// GetValidCredentials loads credentials, refreshes if needed, and returns them if valid.
+// GetValidCredentials loads credentials from secure storage, refreshes if needed, and returns them if valid.
 func GetValidCredentials() *Credentials {
-	creds, err := LoadCredentials()
+	creds, err := LoadCredentialsFromKeyring()
 	if err != nil || creds == nil {
 		return nil
 	}
@@ -147,10 +147,20 @@ func GetValidCredentials() *Credentials {
 	return refreshed
 }
 
+// GetValidCredentialsSecure is an alias for GetValidCredentials using secure storage.
+func GetValidCredentialsSecure() *Credentials {
+	return GetValidCredentials()
+}
+
 // RefreshCredentials uses the refresh token to obtain new credentials.
 func RefreshCredentials(creds *Credentials) (*Credentials, error) {
 	if creds.RefreshToken == "" {
 		return nil, fmt.Errorf("no refresh token available")
+	}
+
+	currentCreds, _ := LoadCredentialsFromKeyring()
+	if currentCreds != nil && currentCreds.IsValid() && currentCreds.AccessToken != creds.AccessToken {
+		return currentCreds, nil
 	}
 
 	cfg, err := config.Load()
@@ -201,8 +211,20 @@ func RefreshCredentials(creds *Credentials) (*Credentials, error) {
 		newCreds.RefreshToken = creds.RefreshToken
 	}
 
-	if err := SaveCredentials(newCreds); err != nil {
-		return nil, fmt.Errorf("failed to save refreshed credentials: %w", err)
+	err = WithCredentialLock(func() error {
+		latestCreds, _ := LoadCredentialsFromKeyring()
+		if latestCreds != nil && latestCreds.IsValid() && latestCreds.AccessToken != creds.AccessToken {
+			newCreds = latestCreds
+			return nil
+		}
+
+		return storeCredentialsInKeyringUnlocked(newCreds)
+	})
+
+	if err != nil {
+		if err := SaveCredentials(newCreds); err != nil {
+			return nil, fmt.Errorf("failed to save refreshed credentials: %w", err)
+		}
 	}
 
 	return newCreds, nil

@@ -116,8 +116,11 @@ func runLogin(noBrowser bool) error {
 	}
 
 	creds = auth.CredentialsFromTokenResponse(tokenResp)
-	if err := auth.SaveCredentials(creds); err != nil {
-		return fmt.Errorf("failed to save credentials: %w", err)
+	if err := auth.StoreCredentialsInKeyring(creds); err != nil {
+		fmt.Printf("Warning: secure storage unavailable, using fallback: %v\n", err)
+		if err := auth.SaveCredentials(creds); err != nil {
+			return fmt.Errorf("failed to save credentials: %w", err)
+		}
 	}
 
 	fmt.Println()
@@ -144,7 +147,7 @@ func runLogout() error {
 		return nil
 	}
 
-	if err := auth.DeleteCredentials(); err != nil {
+	if err := auth.DeleteCredentialsFromKeyring(); err != nil {
 		return fmt.Errorf("failed to logout: %w", err)
 	}
 
@@ -153,7 +156,7 @@ func runLogout() error {
 }
 
 func runStatus() error {
-	creds, err := auth.LoadCredentials()
+	creds, err := auth.LoadCredentialsFromKeyring()
 	if err != nil {
 		return fmt.Errorf("failed to load credentials: %w", err)
 	}

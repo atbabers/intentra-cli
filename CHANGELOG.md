@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-02-05
+
+### Added
+- Secure credential storage using OS-native keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service/KeyCtl)
+- Encrypted file cache (`~/.intentra/credentials.enc`) for hook handlers using AES-256-GCM encryption
+- Unified file locking (`~/.intentra/credentials.lock`) for cross-application credential coordination
+- Check-before-write pattern in token refresh to prevent race conditions between CLI and IDE extensions
+- `github.com/99designs/keyring` dependency for cross-platform keyring support
+- `golang.org/x/crypto` dependency for HKDF key derivation
+
+### Security
+- Credentials no longer stored in cleartext JSON; now encrypted or in OS keyring
+- Machine-derived fallback encryption key using HKDF-SHA256 for headless environments
+- PID-based stale lock detection to clean up locks from crashed processes
+
+### Changed
+- `intentra login` now stores credentials in OS keyring with encrypted cache fallback
+- `intentra logout` removes credentials from both keyring and encrypted cache
+- `intentra status` loads credentials from secure storage hierarchy
+- Token refresh now uses file locking to coordinate between CLI and IDE hooks
+
 ## [0.5.0] - 2026-02-05
 
 ### Added
@@ -198,6 +219,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.6.0]: https://github.com/atbabers/intentra-cli/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/atbabers/intentra-cli/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/atbabers/intentra-cli/compare/v0.3.5...v0.4.0
 [0.3.5]: https://github.com/atbabers/intentra-cli/compare/v0.3.0...v0.3.5
