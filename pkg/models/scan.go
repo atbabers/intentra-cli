@@ -30,6 +30,17 @@ type ScanContent struct {
 	ToolInput json.RawMessage `json:"tool_input,omitempty"`
 }
 
+// MCPToolCall represents aggregated usage of a single MCP server tool within a scan.
+type MCPToolCall struct {
+	ServerName    string  `json:"server_name"`
+	ToolName      string  `json:"tool_name"`
+	ServerURLHash string  `json:"server_url_hash,omitempty"`
+	CallCount     int     `json:"call_count"`
+	TotalDuration int     `json:"total_duration_ms"`
+	EstimatedCost float64 `json:"estimated_cost"`
+	ErrorCount    int     `json:"error_count"`
+}
+
 // Scan represents an aggregated conversation.
 type Scan struct {
 	ID             string       `json:"scan_id"`
@@ -46,7 +57,6 @@ type Scan struct {
 	Content        *ScanContent `json:"content,omitempty"`
 	Events         []Event      `json:"events,omitempty"`
 
-	// Aggregated metrics
 	TotalTokens    int     `json:"total_tokens"`
 	InputTokens    int     `json:"input_tokens"`
 	OutputTokens   int     `json:"output_tokens"`
@@ -55,18 +65,17 @@ type Scan struct {
 	ToolCalls      int     `json:"tool_calls"`
 	EstimatedCost  float64 `json:"estimated_cost"`
 
-	// Analysis results
 	RefundLikelihood int     `json:"refund_likelihood,omitempty"`
 	RefundAmount     float64 `json:"refund_amount,omitempty"`
 	Summary          string  `json:"summary,omitempty"`
 
-	// Raw hook events for violation detection
 	RawEvents []map[string]any `json:"raw_events,omitempty"`
 
-	// Cross-scan detection metadata (Pro/Enterprise)
 	Fingerprint  string         `json:"fingerprint,omitempty"`
 	FilesHash    string         `json:"files_hash,omitempty"`
 	ActionCounts map[string]int `json:"action_counts,omitempty"`
+
+	MCPToolUsage []MCPToolCall `json:"mcp_tool_usage,omitempty"`
 }
 
 // Duration returns the scan duration.

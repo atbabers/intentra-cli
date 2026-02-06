@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -208,7 +209,72 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 	}
 	scan.EstimatedCost = float64(scan.TotalTokens) / 1000.0 * price
 
+	scan.MCPToolUsage = aggregateMCPToolUsage(events, scan.EstimatedCost)
+
 	return scan
+}
+
+// aggregateMCPToolUsage builds per-server/tool usage summaries from buffered events.
+// Cost is attributed proportionally based on MCP call duration vs total scan duration.
+func aggregateMCPToolUsage(events []bufferedEvent, totalScanCost float64) []models.MCPToolCall {
+	type mcpKey struct {
+		serverName string
+		toolName   string
+		urlHash    string
+	}
+
+	usage := make(map[mcpKey]*models.MCPToolCall)
+	totalMCPDuration := 0
+	totalScanDuration := 0
+
+	for _, entry := range events {
+		ev := entry.Event
+		totalScanDuration += ev.DurationMs
+
+		if !ev.IsMCPEvent() {
+			continue
+		}
+
+		urlHash := models.MCPServerURLHash(ev.MCPServerURL, ev.MCPServerCmd)
+		key := mcpKey{
+			serverName: ev.MCPServerName,
+			toolName:   ev.MCPToolName,
+			urlHash:    urlHash,
+		}
+
+		call, exists := usage[key]
+		if !exists {
+			call = &models.MCPToolCall{
+				ServerName:    ev.MCPServerName,
+				ToolName:      ev.MCPToolName,
+				ServerURLHash: urlHash,
+			}
+			usage[key] = call
+		}
+
+		call.CallCount++
+		call.TotalDuration += ev.DurationMs
+		totalMCPDuration += ev.DurationMs
+
+		if ev.Error != "" {
+			call.ErrorCount++
+		}
+	}
+
+	if len(usage) == 0 {
+		return nil
+	}
+
+	var result []models.MCPToolCall
+	for _, call := range usage {
+		if totalScanDuration > 0 && totalScanCost > 0 {
+			proportion := float64(call.TotalDuration) / float64(totalScanDuration)
+			call.EstimatedCost = totalScanCost * proportion
+		}
+		result = append(result, *call)
+	}
+
+	return result
 }
 
 func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, map[string]any, NormalizedEventType, error) {
@@ -374,7 +440,222 @@ func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, 
 		}
 	}
 
+	extractMCPMetadata(event, raw, tool, normalizedType)
+
 	return event, raw, normalizedType, nil
+}
+
+// extractMCPMetadata populates MCP-specific fields on the event based on the tool type.
+// Each AI coding tool exposes MCP data in a different format.
+func extractMCPMetadata(event *models.Event, raw map[string]any, tool string, normalizedType NormalizedEventType) {
+	isMCPHook := normalizedType == EventBeforeMCP || normalizedType == EventAfterMCP
+	isMCPToolUse := strings.HasPrefix(event.ToolName, "MCP:") || strings.HasPrefix(event.ToolName, "mcp__")
+
+	if !isMCPHook && !isMCPToolUse {
+		return
+	}
+
+	if isMCPToolUse && !isMCPHook {
+		toolName := event.ToolName
+		if strings.HasPrefix(toolName, "MCP:") {
+			fullToolName := toolName[4:]
+			event.MCPToolName = fullToolName
+			event.MCPServerName = inferMCPServerName(fullToolName)
+		} else if serverName, mcpTool, ok := models.ParseMCPDoubleUnderscoreName(toolName); ok {
+			event.MCPServerName = serverName
+			event.MCPToolName = mcpTool
+		}
+		return
+	}
+
+	switch tool {
+	case "cursor":
+		extractCursorMCP(event, raw)
+	case "windsurf":
+		extractWindsurfMCP(event, raw)
+	case "claude":
+		extractClaudeGeminiMCP(event, raw)
+	case "gemini":
+		extractClaudeGeminiMCP(event, raw)
+	case "copilot":
+		extractCopilotMCP(event, raw)
+	default:
+		if event.ToolName != "" {
+			event.MCPToolName = event.ToolName
+		}
+	}
+}
+
+// extractCursorMCP handles Cursor's beforeMCPExecution / afterMCPExecution format.
+// Input contains tool_name directly, plus server url or command.
+func extractCursorMCP(event *models.Event, raw map[string]any) {
+	if v, ok := raw["tool_name"].(string); ok {
+		event.MCPToolName = v
+	}
+
+	if v, ok := raw["url"].(string); ok {
+		event.MCPServerURL = models.SanitizeMCPServerURL(v)
+	}
+	if v, ok := raw["command"].(string); ok && event.MCPServerURL == "" {
+		event.MCPServerCmd = models.SanitizeMCPServerCmd(v)
+	}
+
+	if event.MCPServerName == "" {
+		if event.MCPServerURL != "" {
+			event.MCPServerName = extractHostFromURL(event.MCPServerURL)
+		} else if event.MCPServerCmd != "" {
+			event.MCPServerName = event.MCPServerCmd
+		} else if event.MCPToolName != "" {
+			event.MCPServerName = inferMCPServerName(event.MCPToolName)
+		}
+	}
+}
+
+// extractWindsurfMCP handles Windsurf's pre_mcp_tool_use / post_mcp_tool_use format.
+// Data is nested inside tool_info with explicit mcp_server_name and mcp_tool_name.
+func extractWindsurfMCP(event *models.Event, raw map[string]any) {
+	toolInfo, ok := raw["tool_info"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	if v, ok := toolInfo["mcp_server_name"].(string); ok {
+		event.MCPServerName = v
+	}
+	if v, ok := toolInfo["mcp_tool_name"].(string); ok {
+		event.MCPToolName = v
+	}
+}
+
+// extractClaudeGeminiMCP handles Claude Code and Gemini CLI MCP tool format.
+// Tool names follow the pattern mcp__<server>__<tool>.
+func extractClaudeGeminiMCP(event *models.Event, raw map[string]any) {
+	toolName := event.ToolName
+	if toolName == "" {
+		if v, ok := raw["tool_name"].(string); ok {
+			toolName = v
+		}
+	}
+
+	if serverName, mcpTool, ok := models.ParseMCPDoubleUnderscoreName(toolName); ok {
+		event.MCPServerName = serverName
+		event.MCPToolName = mcpTool
+	}
+}
+
+// extractCopilotMCP handles GitHub Copilot MCP calls.
+// Copilot does not expose server names, so we use a pseudo-server.
+func extractCopilotMCP(event *models.Event, raw map[string]any) {
+	event.MCPServerName = "copilot-mcp"
+	if event.ToolName != "" {
+		event.MCPToolName = event.ToolName
+	}
+}
+
+var mcpToolToServer = map[string]string{
+	"browser_click":            "cursor-browser",
+	"browser_close":            "cursor-browser",
+	"browser_console_messages": "cursor-browser",
+	"browser_fill":             "cursor-browser",
+	"browser_fill_form":        "cursor-browser",
+	"browser_get_attribute":    "cursor-browser",
+	"browser_get_bounding_box": "cursor-browser",
+	"browser_get_input_value":  "cursor-browser",
+	"browser_handle_dialog":    "cursor-browser",
+	"browser_highlight":        "cursor-browser",
+	"browser_hover":            "cursor-browser",
+	"browser_is_checked":       "cursor-browser",
+	"browser_is_enabled":       "cursor-browser",
+	"browser_is_visible":       "cursor-browser",
+	"browser_lock":             "cursor-browser",
+	"browser_navigate":         "cursor-browser",
+	"browser_navigate_back":    "cursor-browser",
+	"browser_navigate_forward": "cursor-browser",
+	"browser_network_requests": "cursor-browser",
+	"browser_press_key":        "cursor-browser",
+	"browser_reload":           "cursor-browser",
+	"browser_resize":           "cursor-browser",
+	"browser_run_code":         "cursor-browser",
+	"browser_scroll":           "cursor-browser",
+	"browser_search":           "cursor-browser",
+	"browser_select_option":    "cursor-browser",
+	"browser_snapshot":         "cursor-browser",
+	"browser_tabs":             "cursor-browser",
+	"browser_take_screenshot":  "cursor-browser",
+	"browser_type":             "cursor-browser",
+	"browser_unlock":           "cursor-browser",
+	"browser_wait_for":         "cursor-browser",
+
+	"navigate_page":    "chrome-devtools",
+	"evaluate_script":  "chrome-devtools",
+	"list_pages":       "chrome-devtools",
+	"new_page":         "chrome-devtools",
+	"take_snapshot":    "chrome-devtools",
+	"take_screenshot":  "chrome-devtools",
+	"navigate":         "chrome-devtools",
+	"select_page":      "chrome-devtools",
+	"close_page":       "chrome-devtools",
+	"click":            "chrome-devtools",
+	"hover":            "chrome-devtools",
+	"fill":             "chrome-devtools",
+	"fill_form":        "chrome-devtools",
+	"drag":             "chrome-devtools",
+	"press_key":        "chrome-devtools",
+	"upload_file":      "chrome-devtools",
+	"wait_for":         "chrome-devtools",
+	"handle_dialog":    "chrome-devtools",
+	"emulate":          "chrome-devtools",
+	"resize_page":      "chrome-devtools",
+
+	"search_issues":       "sentry",
+	"get_issue_details":   "sentry",
+	"find_organizations":  "sentry",
+	"find_projects":       "sentry",
+	"find_releases":       "sentry",
+	"search_events":       "sentry",
+	"update_issue":        "sentry",
+
+	"event-definitions-list": "posthog",
+	"organizations-get":      "posthog",
+	"projects-get":           "posthog",
+	"list_teams":             "posthog",
+	"list_projects":          "posthog",
+	"list-errors":            "posthog",
+}
+
+func inferMCPServerName(toolName string) string {
+	if server, ok := mcpToolToServer[toolName]; ok {
+		return server
+	}
+
+	if strings.HasPrefix(toolName, "browser_") {
+		return "cursor-browser"
+	}
+
+	if strings.Contains(toolName, "__") {
+		parts := strings.SplitN(toolName, "__", 2)
+		if len(parts) == 2 {
+			return parts[0]
+		}
+	}
+
+	return "mcp"
+}
+
+func extractHostFromURL(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	host := parsed.Hostname()
+	parts := strings.Split(host, ".")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2]
+	}
+	return host
 }
 
 // ProcessEvent reads an event from stdin and sends directly to API.
@@ -589,6 +870,10 @@ func syncScanWithJWT(scan *models.Scan, accessToken string) error {
 		"session_id":      sessionID,
 		"generation_id":   scan.GenerationID,
 		"model":           scan.Model,
+	}
+
+	if len(scan.MCPToolUsage) > 0 {
+		body["mcp_tool_usage"] = scan.MCPToolUsage
 	}
 
 	jsonBody, err := json.Marshal(body)

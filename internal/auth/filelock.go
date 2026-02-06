@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	lockFileName    = "credentials.lock"
-	lockTimeout     = 10 * time.Second
-	lockStaleAge    = 30 * time.Second
+	lockFileName     = "credentials.lock"
+	lockTimeout      = 10 * time.Second
+	lockStaleAge     = 30 * time.Second
 	lockPollInterval = 50 * time.Millisecond
 )
 
@@ -36,8 +36,8 @@ func AcquireCredentialLock() (func(), error) {
 			file, err := os.OpenFile(lockFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 			if err == nil {
 				pid := os.Getpid()
-			_, _ = file.WriteString(fmt.Sprintf("%d\n%d", pid, time.Now().UnixMilli()))
-			file.Close()
+				_, _ = file.WriteString(fmt.Sprintf("%d\n%d", pid, time.Now().UnixMilli()))
+				file.Close()
 
 				release := func() {
 					os.Remove(lockFile)

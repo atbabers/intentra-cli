@@ -4,7 +4,12 @@
 package models
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"net/url"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -26,7 +31,6 @@ type Event struct {
 	DeviceID       string    `json:"device_id,omitempty"`
 	Tool           string    `json:"tool,omitempty"`
 
-	// Content varies by hook type
 	Prompt        string          `json:"prompt,omitempty"`
 	Response      string          `json:"response,omitempty"`
 	Thought       string          `json:"thought,omitempty"`
@@ -37,14 +41,22 @@ type Event struct {
 	Command       string          `json:"command,omitempty"`
 	CommandOutput string          `json:"command_output,omitempty"`
 
-	// Metrics
+	MCPServerName string `json:"mcp_server_name,omitempty"`
+	MCPToolName   string `json:"mcp_tool_name,omitempty"`
+	MCPServerURL  string `json:"mcp_server_url,omitempty"`
+	MCPServerCmd  string `json:"mcp_server_cmd,omitempty"`
+
 	InputTokens    int `json:"input_tokens,omitempty"`
 	OutputTokens   int `json:"output_tokens,omitempty"`
 	ThinkingTokens int `json:"thinking_tokens,omitempty"`
 	DurationMs     int `json:"duration_ms,omitempty"`
 
-	// Error tracking
 	Error string `json:"error,omitempty"`
+}
+
+// IsMCPEvent returns true if this event is an MCP tool invocation.
+func (e *Event) IsMCPEvent() bool {
+	return e.MCPServerName != "" || e.MCPToolName != ""
 }
 
 // EstimateTokens estimates tokens from text length.
@@ -53,4 +65,57 @@ func EstimateTokens(text string, charsPerToken int) int {
 		charsPerToken = 4
 	}
 	return len(text) / charsPerToken
+}
+
+// SanitizeMCPServerURL strips query parameters from a URL to prevent leaking API keys.
+// Returns only scheme + host + path.
+func SanitizeMCPServerURL(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+// SanitizeMCPServerCmd extracts only the binary name from a command path.
+// Prevents leaking local directory structures.
+func SanitizeMCPServerCmd(cmd string) string {
+	if cmd == "" {
+		return ""
+	}
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return ""
+	}
+	return filepath.Base(parts[0])
+}
+
+// ParseMCPDoubleUnderscoreName parses Claude Code and Gemini CLI MCP tool names
+// in the format mcp__<server>__<tool>. Splits on the first two __ delimiters only.
+func ParseMCPDoubleUnderscoreName(toolName string) (serverName, mcpToolName string, ok bool) {
+	if !strings.HasPrefix(toolName, "mcp__") {
+		return "", "", false
+	}
+	rest := toolName[5:]
+	idx := strings.Index(rest, "__")
+	if idx < 0 {
+		return rest, "", true
+	}
+	return rest[:idx], rest[idx+2:], true
+}
+
+// MCPServerURLHash returns a short hash of the sanitized server URL or command.
+// Used as a deduplication key alongside server name.
+func MCPServerURLHash(serverURL, serverCmd string) string {
+	input := serverURL + "|" + serverCmd
+	if input == "|" {
+		return ""
+	}
+	hash := sha256.Sum256([]byte(input))
+	return hex.EncodeToString(hash[:])[:8]
 }

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-02-06
+
+### Added
+- MCP (Model Context Protocol) tool attribution: per-server and per-tool usage tracking across all supported AI coding tools
+- `MCPToolCall` model for aggregated MCP tool usage within scans
+- `extractMCPMetadata` with per-tool extraction for Cursor, Windsurf, Claude Code, Gemini CLI, and GitHub Copilot
+- `aggregateMCPToolUsage` for proportional cost attribution based on MCP call duration vs total scan duration
+- `inferMCPServerName` with known tool-to-server mapping for common MCP servers (cursor-browser, chrome-devtools, sentry, posthog)
+- `IsMCPEvent()` method on Event for MCP event identification
+- MCP data sanitization utilities (`SanitizeMCPServerURL`, `SanitizeMCPServerCmd`) to prevent leaking API keys and local paths
+- `ParseMCPDoubleUnderscoreName` for Claude Code and Gemini CLI `mcp__server__tool` format
+- `MCPServerURLHash` for server deduplication across different connection methods
+- `mcp_tool_usage` field included in scan submission payload to API
+- MCP action count tracking in scan aggregator (`action_counts.mcp`)
+
+### Fixed
+- Corrected indentation in credential file lock write (filelock.go)
+
 ## [0.6.0] - 2026-02-05
 
 ### Added
@@ -219,6 +237,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.7.0]: https://github.com/atbabers/intentra-cli/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/atbabers/intentra-cli/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/atbabers/intentra-cli/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/atbabers/intentra-cli/compare/v0.3.5...v0.4.0

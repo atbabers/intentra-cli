@@ -175,12 +175,14 @@ func calculateActionCounts(events []models.Event) map[string]int {
 		"edits":  0,
 		"reads":  0,
 		"shell":  0,
+		"mcp":    0,
 		"failed": 0,
 	}
 
 	editTypes := map[string]bool{"after_file_edit": true, "before_file_edit": true}
 	readTypes := map[string]bool{"after_file_read": true, "before_file_read": true}
 	shellTypes := map[string]bool{"after_shell": true, "before_shell": true}
+	mcpTypes := map[string]bool{"after_mcp": true, "before_mcp": true}
 
 	for _, e := range events {
 		if editTypes[e.NormalizedType] {
@@ -189,6 +191,8 @@ func calculateActionCounts(events []models.Event) map[string]int {
 			counts["reads"]++
 		} else if shellTypes[e.NormalizedType] {
 			counts["shell"]++
+		} else if mcpTypes[e.NormalizedType] {
+			counts["mcp"]++
 		}
 
 		if e.Error != "" {
