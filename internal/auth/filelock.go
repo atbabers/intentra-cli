@@ -36,8 +36,8 @@ func AcquireCredentialLock() (func(), error) {
 			file, err := os.OpenFile(lockFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 			if err == nil {
 				pid := os.Getpid()
-				file.WriteString(fmt.Sprintf("%d\n%d", pid, time.Now().UnixMilli()))
-				file.Close()
+			_, _ = file.WriteString(fmt.Sprintf("%d\n%d", pid, time.Now().UnixMilli()))
+			file.Close()
 
 				release := func() {
 					os.Remove(lockFile)
@@ -73,7 +73,7 @@ func tryCleanStaleLock(lockFile string) bool {
 
 	lines := string(data)
 	var pid int
-	fmt.Sscanf(lines, "%d", &pid)
+	_, _ = fmt.Sscanf(lines, "%d", &pid)
 
 	if pid > 0 && !isProcessRunning(pid) {
 		os.Remove(lockFile)
@@ -118,7 +118,7 @@ func TryWithCredentialLock(fn func() error) error {
 	}
 
 	pid := os.Getpid()
-	file.WriteString(strconv.Itoa(pid) + "\n" + strconv.FormatInt(time.Now().UnixMilli(), 10))
+	_, _ = file.WriteString(strconv.Itoa(pid) + "\n" + strconv.FormatInt(time.Now().UnixMilli(), 10))
 	file.Close()
 
 	defer os.Remove(lockFile)
