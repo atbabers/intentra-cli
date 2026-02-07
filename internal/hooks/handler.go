@@ -448,7 +448,10 @@ func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, 
 	if errObj, ok := raw["error"].(map[string]any); ok {
 		if msg, ok := errObj["message"].(string); ok {
 			event.Response = "Error: " + msg
+			event.Error = msg
 		}
+	} else if errStr, ok := raw["error"].(string); ok && errStr != "" {
+		event.Error = errStr
 	}
 
 	extractMCPMetadata(event, raw, tool, normalizedType)
@@ -643,34 +646,34 @@ var mcpToolToServer = map[string]string{
 	"browser_unlock":           "cursor-browser",
 	"browser_wait_for":         "cursor-browser",
 
-	"navigate_page":    "chrome-devtools",
-	"evaluate_script":  "chrome-devtools",
-	"list_pages":       "chrome-devtools",
-	"new_page":         "chrome-devtools",
-	"take_snapshot":    "chrome-devtools",
-	"take_screenshot":  "chrome-devtools",
-	"navigate":         "chrome-devtools",
-	"select_page":      "chrome-devtools",
-	"close_page":       "chrome-devtools",
-	"click":            "chrome-devtools",
-	"hover":            "chrome-devtools",
-	"fill":             "chrome-devtools",
-	"fill_form":        "chrome-devtools",
-	"drag":             "chrome-devtools",
-	"press_key":        "chrome-devtools",
-	"upload_file":      "chrome-devtools",
-	"wait_for":         "chrome-devtools",
-	"handle_dialog":    "chrome-devtools",
-	"emulate":          "chrome-devtools",
-	"resize_page":      "chrome-devtools",
+	"navigate_page":   "chrome-devtools",
+	"evaluate_script": "chrome-devtools",
+	"list_pages":      "chrome-devtools",
+	"new_page":        "chrome-devtools",
+	"take_snapshot":   "chrome-devtools",
+	"take_screenshot": "chrome-devtools",
+	"navigate":        "chrome-devtools",
+	"select_page":     "chrome-devtools",
+	"close_page":      "chrome-devtools",
+	"click":           "chrome-devtools",
+	"hover":           "chrome-devtools",
+	"fill":            "chrome-devtools",
+	"fill_form":       "chrome-devtools",
+	"drag":            "chrome-devtools",
+	"press_key":       "chrome-devtools",
+	"upload_file":     "chrome-devtools",
+	"wait_for":        "chrome-devtools",
+	"handle_dialog":   "chrome-devtools",
+	"emulate":         "chrome-devtools",
+	"resize_page":     "chrome-devtools",
 
-	"search_issues":       "sentry",
-	"get_issue_details":   "sentry",
-	"find_organizations":  "sentry",
-	"find_projects":       "sentry",
-	"find_releases":       "sentry",
-	"search_events":       "sentry",
-	"update_issue":        "sentry",
+	"search_issues":      "sentry",
+	"get_issue_details":  "sentry",
+	"find_organizations": "sentry",
+	"find_projects":      "sentry",
+	"find_releases":      "sentry",
+	"search_events":      "sentry",
+	"update_issue":       "sentry",
 
 	"event-definitions-list": "posthog",
 	"organizations-get":      "posthog",
