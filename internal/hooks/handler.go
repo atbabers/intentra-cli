@@ -140,8 +140,20 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 		SessionID: first.Event.SessionID,
 	}
 
+	const maxPreCompactEvents = 10
+	preCompactCount := 0
+
 	for _, entry := range events {
 		ev := entry.Event
+		normalizedType := NormalizedEventType(ev.NormalizedType)
+
+		if normalizedType == EventPreCompact {
+			preCompactCount++
+			if preCompactCount > maxPreCompactEvents {
+				continue
+			}
+		}
+
 		scan.Events = append(scan.Events, *ev)
 
 		rawEvent := entry.RawEvent
@@ -155,7 +167,6 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 		scan.OutputTokens += ev.OutputTokens
 		scan.ThinkingTokens += ev.ThinkingTokens
 
-		normalizedType := NormalizedEventType(ev.NormalizedType)
 		if IsLLMCallEvent(normalizedType) {
 			scan.LLMCalls++
 		}
@@ -441,8 +452,54 @@ func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, 
 	}
 
 	extractMCPMetadata(event, raw, tool, normalizedType)
+	extractCompactionMetadata(event, raw, normalizedType)
 
 	return event, raw, normalizedType, nil
+}
+
+// extractCompactionMetadata populates compaction-specific fields for pre_compact events.
+// Cursor provides rich context window metrics; Claude Code and Gemini CLI provide only trigger type.
+func extractCompactionMetadata(event *models.Event, raw map[string]any, normalizedType NormalizedEventType) {
+	if normalizedType != EventPreCompact {
+		return
+	}
+
+	if v, ok := raw["trigger"].(string); ok {
+		if v == "auto" || v == "manual" {
+			event.CompactionTrigger = v
+		}
+	}
+
+	if v, ok := raw["context_usage_percent"].(float64); ok {
+		pct := int(v)
+		if pct < 0 {
+			pct = 0
+		}
+		if pct > 100 {
+			pct = 100
+		}
+		event.ContextUsagePercent = pct
+	}
+
+	if v, ok := raw["context_tokens"].(float64); ok && v >= 0 {
+		event.ContextTokens = int(v)
+	}
+
+	if v, ok := raw["context_window_size"].(float64); ok && v >= 0 {
+		event.ContextWindowSize = int(v)
+	}
+
+	if v, ok := raw["message_count"].(float64); ok && v >= 0 {
+		event.MessageCount = int(v)
+	}
+
+	if v, ok := raw["messages_to_compact"].(float64); ok && v >= 0 {
+		event.MessagesToCompact = int(v)
+	}
+
+	if v, ok := raw["is_first_compaction"].(bool); ok {
+		event.IsFirstCompaction = &v
+	}
 }
 
 // extractMCPMetadata populates MCP-specific fields on the event based on the tool type.
@@ -839,6 +896,27 @@ func syncScanWithJWT(scan *models.Scan, accessToken string) error {
 					"output":   ev.OutputTokens,
 					"thinking": ev.ThinkingTokens,
 				},
+			}
+			if ev.CompactionTrigger != "" {
+				evMap["compaction_trigger"] = ev.CompactionTrigger
+			}
+			if ev.ContextUsagePercent > 0 {
+				evMap["context_usage_percent"] = ev.ContextUsagePercent
+			}
+			if ev.ContextTokens > 0 {
+				evMap["context_tokens"] = ev.ContextTokens
+			}
+			if ev.ContextWindowSize > 0 {
+				evMap["context_window_size"] = ev.ContextWindowSize
+			}
+			if ev.MessageCount > 0 {
+				evMap["message_count"] = ev.MessageCount
+			}
+			if ev.MessagesToCompact > 0 {
+				evMap["messages_to_compact"] = ev.MessagesToCompact
+			}
+			if ev.IsFirstCompaction != nil {
+				evMap["is_first_compaction"] = *ev.IsFirstCompaction
 			}
 			if len(ev.ToolInput) > 0 {
 				var toolInput map[string]any

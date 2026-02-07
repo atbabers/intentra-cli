@@ -28,6 +28,7 @@ func (n *CursorNormalizer) NormalizeEventType(native string) NormalizedEventType
 		"afterTabFileEdit":     EventAfterFileEdit,
 		"preToolUse":           EventBeforeTool,
 		"postToolUse":          EventAfterTool,
+		"preCompact":           EventPreCompact,
 		"stop":                 EventStop,
 	}
 	if normalized, ok := mapping[native]; ok {

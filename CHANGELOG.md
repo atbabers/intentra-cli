@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-02-06
+
+### Added
+- Context compaction event tracking with `preCompact` event type support for Cursor
+- Compaction metadata extraction: trigger type, context usage percent, context/window token counts, message counts, and first-compaction flag
+- Seven new fields on Event model: `ContextUsagePercent`, `ContextTokens`, `ContextWindowSize`, `MessageCount`, `MessagesToCompact`, `IsFirstCompaction`, `CompactionTrigger`
+- Compaction metadata included in scan submission payload to API
+- Rate limiting for `pre_compact` events (max 10 per scan) to prevent payload bloat
+
 ## [0.7.0] - 2026-02-06
 
 ### Added
@@ -237,6 +246,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.8.0]: https://github.com/atbabers/intentra-cli/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/atbabers/intentra-cli/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/atbabers/intentra-cli/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/atbabers/intentra-cli/compare/v0.4.0...v0.5.0

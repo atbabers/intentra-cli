@@ -51,6 +51,14 @@ type Event struct {
 	ThinkingTokens int `json:"thinking_tokens,omitempty"`
 	DurationMs     int `json:"duration_ms,omitempty"`
 
+	ContextUsagePercent int    `json:"context_usage_percent,omitempty"`
+	ContextTokens       int    `json:"context_tokens,omitempty"`
+	ContextWindowSize   int    `json:"context_window_size,omitempty"`
+	MessageCount        int    `json:"message_count,omitempty"`
+	MessagesToCompact   int    `json:"messages_to_compact,omitempty"`
+	IsFirstCompaction   *bool  `json:"is_first_compaction,omitempty"`
+	CompactionTrigger   string `json:"compaction_trigger,omitempty"`
+
 	Error string `json:"error,omitempty"`
 }
 
