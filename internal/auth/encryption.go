@@ -58,6 +58,7 @@ func WriteEncryptedCache(creds *Credentials) error {
 	copy(data[1:], ciphertext)
 
 	keyFile := GetCacheKeyFile()
+	os.Remove(keyFile)
 	if err := os.WriteFile(keyFile, key, 0400); err != nil {
 		return fmt.Errorf("failed to write key file: %w", err)
 	}
