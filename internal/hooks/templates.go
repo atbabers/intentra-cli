@@ -79,17 +79,23 @@ type ClaudeHookEntry struct {
 var cursorHookTypes = []string{
 	"sessionStart",
 	"sessionEnd",
+	"beforeSubmitPrompt",
 	"preToolUse",
 	"postToolUse",
+	"postToolUseFailure",
 	"subagentStart",
 	"subagentStop",
 	"beforeShellExecution",
 	"afterShellExecution",
+	"beforeMCPExecution",
 	"afterMCPExecution",
+	"afterAgentResponse",
+	"afterAgentThought",
 	"afterFileEdit",
 	"preCompact",
 	"stop",
 	"beforeTabFileRead",
+	"beforeReadFile",
 	"afterTabFileEdit",
 }
 

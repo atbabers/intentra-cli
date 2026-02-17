@@ -131,6 +131,31 @@ func (c *Client) SendScan(scan *models.Scan) error {
 		"device_id":       deviceID,
 		"conversation_id": scan.ConversationID,
 		"session_id":      sessionID,
+		"generation_id":   scan.GenerationID,
+		"model":           scan.Model,
+	}
+
+	if len(scan.MCPToolUsage) > 0 {
+		body["mcp_tool_usage"] = scan.MCPToolUsage
+	}
+	if scan.SessionEndReason != "" {
+		body["session_end_reason"] = scan.SessionEndReason
+	}
+	if scan.SessionDurationMs > 0 {
+		body["session_duration_ms"] = scan.SessionDurationMs
+	}
+
+	if scan.RepoName != "" {
+		body["repo_name"] = scan.RepoName
+	}
+	if scan.RepoURLHash != "" {
+		body["repo_url_hash"] = scan.RepoURLHash
+	}
+	if scan.BranchName != "" {
+		body["branch_name"] = scan.BranchName
+	}
+	if len(scan.FilesModified) > 0 {
+		body["files_modified"] = scan.FilesModified
 	}
 
 	jsonBody, err := json.Marshal(body)

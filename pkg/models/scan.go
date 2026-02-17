@@ -76,6 +76,15 @@ type Scan struct {
 	ActionCounts map[string]int `json:"action_counts,omitempty"`
 
 	MCPToolUsage []MCPToolCall `json:"mcp_tool_usage,omitempty"`
+
+	SessionEndReason  string `json:"session_end_reason,omitempty"`
+	SessionDurationMs int64  `json:"session_duration_ms,omitempty"`
+
+	RepoName      string                   `json:"repo_name,omitempty"`
+	RepoURLHash   string                   `json:"repo_url_hash,omitempty"`
+	BranchName    string                   `json:"branch_name,omitempty"`
+	FilesModified []map[string]interface{} `json:"files_modified,omitempty"`
+	AcceptedLines int                      `json:"accepted_lines,omitempty"`
 }
 
 // Duration returns the scan duration.

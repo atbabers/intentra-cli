@@ -203,6 +203,64 @@ func calculateActionCounts(events []models.Event) map[string]int {
 	return counts
 }
 
+// AggregateFilesModified builds per-file edit statistics from a slice of events.
+func AggregateFilesModified(events []models.Event) []map[string]interface{} {
+	type fileStats struct {
+		linesAdded   int
+		linesRemoved int
+		editCount    int
+		isNew        bool
+		seenBefore   bool
+	}
+
+	stats := make(map[string]*fileStats)
+
+	for _, ev := range events {
+		if ev.FilePath == "" {
+			continue
+		}
+
+		path := ev.FilePath
+		s, exists := stats[path]
+		if !exists {
+			s = &fileStats{}
+			stats[path] = s
+		}
+
+		switch ev.NormalizedType {
+		case "before_file_edit":
+			s.seenBefore = true
+		case "after_file_edit":
+			s.editCount++
+			s.linesAdded += ev.OutputTokens / 15
+			if !s.seenBefore {
+				s.isNew = true
+			}
+		}
+	}
+
+	if len(stats) == 0 {
+		return nil
+	}
+
+	var result []map[string]interface{}
+	for path, s := range stats {
+		if s.editCount == 0 {
+			continue
+		}
+		entry := map[string]interface{}{
+			"file_path":     path,
+			"is_new_file":   s.isNew,
+			"lines_added":   s.linesAdded,
+			"lines_removed": s.linesRemoved,
+			"edit_count":    s.editCount,
+		}
+		result = append(result, entry)
+	}
+
+	return result
+}
+
 // CreateScanFromEvent creates a scan from a single event for immediate sync.
 func CreateScanFromEvent(event models.Event) *models.Scan {
 	// Generate scan ID

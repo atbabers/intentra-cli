@@ -7,6 +7,7 @@ package hooks
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -39,6 +41,31 @@ func getBufferPath(sessionKey string) string {
 	hash := sha256.Sum256([]byte(sessionKey))
 	filename := "intentra_buffer_" + hex.EncodeToString(hash[:8]) + ".jsonl"
 	return filepath.Join(os.TempDir(), filename)
+}
+
+func getLastScanPath(sessionKey string) string {
+	hash := sha256.Sum256([]byte(sessionKey))
+	filename := "intentra_lastscan_" + hex.EncodeToString(hash[:8]) + ".txt"
+	return filepath.Join(os.TempDir(), filename)
+}
+
+func saveLastScanID(sessionKey, scanID string) {
+	path := getLastScanPath(sessionKey)
+	os.WriteFile(path, []byte(scanID), 0600)
+}
+
+func getLastScanID(sessionKey string) string {
+	path := getLastScanPath(sessionKey)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func clearLastScanID(sessionKey string) {
+	path := getLastScanPath(sessionKey)
+	os.Remove(path)
 }
 
 func appendToBuffer(sessionKey string, event *models.Event, rawEvent map[string]any) error {
@@ -93,22 +120,56 @@ func readAndClearBuffer(sessionKey string) ([]bufferedEvent, error) {
 }
 
 func cleanupStaleBuffers() {
-	pattern := filepath.Join(os.TempDir(), "intentra_buffer_*.jsonl")
-	files, err := filepath.Glob(pattern)
-	if err != nil {
-		return
+	patterns := []string{
+		filepath.Join(os.TempDir(), "intentra_buffer_*.jsonl"),
+		filepath.Join(os.TempDir(), "intentra_lastscan_*.txt"),
 	}
 
 	cutoff := time.Now().Add(-maxBufferAge)
-	for _, f := range files {
-		info, err := os.Stat(f)
+	for _, pattern := range patterns {
+		files, err := filepath.Glob(pattern)
 		if err != nil {
 			continue
 		}
-		if info.ModTime().Before(cutoff) {
-			os.Remove(f)
+		for _, f := range files {
+			info, err := os.Stat(f)
+			if err != nil {
+				continue
+			}
+			if info.ModTime().Before(cutoff) {
+				os.Remove(f)
+			}
 		}
 	}
+}
+
+func collectGitMetadata() (repoName, repoURLHash, branchName string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	if out, err := exec.CommandContext(ctx, "git", "remote", "get-url", "origin").Output(); err == nil {
+		remoteURL := strings.TrimSpace(string(out))
+		if remoteURL != "" {
+			hash := sha256.Sum256([]byte(remoteURL))
+			repoURLHash = hex.EncodeToString(hash[:])
+
+			name := remoteURL
+			if idx := strings.LastIndex(name, "/"); idx >= 0 {
+				name = name[idx+1:]
+			}
+			if idx := strings.LastIndex(name, ":"); idx >= 0 {
+				name = name[idx+1:]
+			}
+			name = strings.TrimSuffix(name, ".git")
+			repoName = name
+		}
+	}
+
+	if out, err := exec.CommandContext(ctx, "git", "branch", "--show-current").Output(); err == nil {
+		branchName = strings.TrimSpace(string(out))
+	}
+
+	return
 }
 
 func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
@@ -221,6 +282,37 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 	scan.EstimatedCost = float64(scan.TotalTokens) / 1000.0 * price
 
 	scan.MCPToolUsage = aggregateMCPToolUsage(events, scan.EstimatedCost)
+
+	repoName, repoURLHash, branchName := collectGitMetadata()
+	scan.RepoName = repoName
+	scan.RepoURLHash = repoURLHash
+	scan.BranchName = branchName
+
+	var allEvents []models.Event
+	for _, entry := range events {
+		allEvents = append(allEvents, *entry.Event)
+	}
+	scan.FilesModified = scanner.AggregateFilesModified(allEvents)
+
+	if tool == "copilot" || tool == "gemini" {
+		for i := len(events) - 1; i >= 0; i-- {
+			entry := events[i]
+			if NormalizedEventType(entry.Event.NormalizedType) == EventSessionEnd && entry.RawEvent != nil {
+				if reason, ok := entry.RawEvent["reason"].(string); ok && reason != "" {
+					scan.SessionEndReason = reason
+				}
+				switch v := entry.RawEvent["duration_ms"].(type) {
+				case float64:
+					scan.SessionDurationMs = int64(v)
+				case json.Number:
+					if n, err := v.Int64(); err == nil {
+						scan.SessionDurationMs = n
+					}
+				}
+				break
+			}
+		}
+	}
 
 	return scan
 }
@@ -775,7 +867,7 @@ func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType
 		}
 	}
 
-	if IsStopEvent(normalizedType) {
+	if IsStopEvent(normalizedType, tool) {
 		if err := appendToBuffer(sessionKey, event, rawMap); err != nil {
 			return fmt.Errorf("failed to buffer event: %w", err)
 		}
@@ -816,6 +908,10 @@ func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType
 			}
 		}
 
+		if synced && scan.ID != "" {
+			saveLastScanID(sessionKey, scan.ID)
+		}
+
 		if debug.Enabled {
 			if err := scanner.SaveScan(scan); err != nil {
 				debug.Warn("failed to save scan locally: %v", err)
@@ -824,6 +920,45 @@ func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType
 			}
 		}
 
+		return nil
+	}
+
+	if IsSessionEndEvent(normalizedType, tool) {
+		lastScanID := getLastScanID(sessionKey)
+		if lastScanID == "" {
+			debug.Log("sessionEnd event but no lastScanID for session %s, ignoring", sessionKey)
+			return nil
+		}
+
+		creds := auth.GetValidCredentials()
+		if creds == nil {
+			debug.Log("sessionEnd event but no valid credentials, ignoring")
+			return nil
+		}
+
+		reason := ""
+		durationMs := int64(0)
+		if rawMap != nil {
+			if r, ok := rawMap["reason"].(string); ok {
+				reason = r
+			}
+			switch v := rawMap["duration_ms"].(type) {
+			case float64:
+				durationMs = int64(v)
+			case json.Number:
+				if n, err := v.Int64(); err == nil {
+					durationMs = n
+				}
+			}
+		}
+
+		if err := patchSessionEnd(lastScanID, creds.AccessToken, reason, durationMs); err != nil {
+			debug.Warn("failed to PATCH session end: %v", err)
+		} else {
+			debug.Log("PATCHed session end for scan %s", lastScanID)
+		}
+
+		clearLastScanID(sessionKey)
 		return nil
 	}
 
@@ -957,6 +1092,26 @@ func syncScanWithJWT(scan *models.Scan, accessToken string) error {
 		body["mcp_tool_usage"] = scan.MCPToolUsage
 	}
 
+	if scan.SessionEndReason != "" {
+		body["session_end_reason"] = scan.SessionEndReason
+	}
+	if scan.SessionDurationMs > 0 {
+		body["session_duration_ms"] = scan.SessionDurationMs
+	}
+
+	if scan.RepoName != "" {
+		body["repo_name"] = scan.RepoName
+	}
+	if scan.RepoURLHash != "" {
+		body["repo_url_hash"] = scan.RepoURLHash
+	}
+	if scan.BranchName != "" {
+		body["branch_name"] = scan.BranchName
+	}
+	if len(scan.FilesModified) > 0 {
+		body["files_modified"] = scan.FilesModified
+	}
+
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("failed to marshal scan: %w", err)
@@ -985,6 +1140,57 @@ func syncScanWithJWT(scan *models.Scan, accessToken string) error {
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("API returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+func patchSessionEnd(scanID, accessToken, reason string, durationMs int64) error {
+	deviceID, err := device.GetDeviceID()
+	if err != nil {
+		return fmt.Errorf("failed to get device ID: %w", err)
+	}
+
+	body := map[string]any{}
+	if reason != "" {
+		body["session_end_reason"] = reason
+	}
+	if durationMs > 0 {
+		body["session_duration_ms"] = durationMs
+	}
+
+	if len(body) == 0 {
+		return nil
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("failed to marshal session end body: %w", err)
+	}
+
+	patchURL := defaultAPIEndpoint + "/scans/" + url.PathEscape(scanID) + "/session"
+	req, err := http.NewRequest("PATCH", patchURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("failed to create PATCH request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "intentra-cli/1.0")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Machine-ID", deviceID)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		debug.LogHTTP("PATCH", patchURL, 0)
+		return fmt.Errorf("PATCH request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	debug.LogHTTP("PATCH", patchURL, resp.StatusCode)
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("PATCH returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	return nil

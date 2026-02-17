@@ -35,9 +35,11 @@ const (
 	EventPermissionRequest NormalizedEventType = "permission_request"
 	EventNotification      NormalizedEventType = "notification"
 	EventStop              NormalizedEventType = "stop"
+	EventSubagentStart     NormalizedEventType = "subagent_start"
 	EventSubagentStop      NormalizedEventType = "subagent_stop"
 	EventPreCompact        NormalizedEventType = "pre_compact"
 	EventError             NormalizedEventType = "error"
+	EventToolUseFailure    NormalizedEventType = "tool_use_failure"
 	EventWorktreeSetup     NormalizedEventType = "worktree_setup"
 	EventUnknown           NormalizedEventType = "unknown"
 )
@@ -76,12 +78,27 @@ func (n *GenericNormalizer) NormalizeEventType(native string) NormalizedEventTyp
 }
 
 // IsStopEvent returns true if the event type marks the end of a scan.
-func IsStopEvent(eventType NormalizedEventType) bool {
-	return eventType == EventStop ||
-		eventType == EventSubagentStop ||
-		eventType == EventSessionEnd ||
-		eventType == EventAfterResponse ||
-		eventType == EventError
+// Each tool has exactly ONE designated terminal event to prevent duplicate scans.
+func IsStopEvent(eventType NormalizedEventType, tool string) bool {
+	switch tool {
+	case "windsurf":
+		return eventType == EventAfterResponse
+	case "copilot":
+		return eventType == EventSessionEnd
+	case "gemini":
+		return eventType == EventSessionEnd
+	default:
+		return eventType == EventStop
+	}
+}
+
+// IsSessionEndEvent returns true if this event carries session-end metadata
+// that should be PATCHed onto the last scan (not trigger a new scan).
+func IsSessionEndEvent(eventType NormalizedEventType, tool string) bool {
+	if tool == "windsurf" || tool == "copilot" {
+		return false
+	}
+	return eventType == EventSessionEnd
 }
 
 // IsLLMCallEvent returns true if the event represents an LLM call.

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-02-17
+
+### Added
+- Git metadata collection: repo name, repo URL hash, and branch name attached to each scan
+- File modification tracking: per-file edit statistics (lines added/removed, edit count, new file detection) aggregated from events
+- Session end tracking with reason and duration fields on Scan model
+- PATCH `/scans/{id}/session` API call to update session end metadata on previously synced scans
+- Last scan ID persistence per session for linking session end events to their scan
+- New normalized event types: `subagent_start`, `tool_use_failure`
+- New Cursor hook event types: `beforeSubmitPrompt`, `postToolUseFailure`, `subagentStart`, `subagentStop`, `beforeMCPExecution`, `afterAgentResponse`, `afterAgentThought`, `beforeReadFile`
+- `AggregateFilesModified` function in scanner aggregator for building per-file edit statistics
+- `SessionEndReason`, `SessionDurationMs`, `RepoName`, `RepoURLHash`, `BranchName`, `FilesModified`, `AcceptedLines` fields on Scan model
+
+### Changed
+- `IsStopEvent` now uses per-tool terminal event mapping to prevent duplicate scans (Windsurf uses `afterResponse`, Copilot/Gemini use `sessionEnd`, others use `stop`)
+- `IsSessionEndEvent` introduced for tools where session end is a separate PATCH rather than a scan trigger
+- Stale buffer cleanup now also cleans up `intentra_lastscan_*.txt` temp files
+- Scan submission payload now includes git metadata, session end, and file modification fields
+
 ## [0.8.2] - 2026-02-13
 
 ### Fixed
@@ -257,6 +276,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.9.0]: https://github.com/atbabers/intentra-cli/compare/v0.8.2...v0.9.0
 [0.8.2]: https://github.com/atbabers/intentra-cli/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/atbabers/intentra-cli/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/atbabers/intentra-cli/compare/v0.7.0...v0.8.0

@@ -24,11 +24,15 @@ func (n *CursorNormalizer) NormalizeEventType(native string) NormalizedEventType
 		"beforeMCPExecution":   EventBeforeMCP,
 		"afterMCPExecution":    EventAfterMCP,
 		"beforeTabFileRead":    EventBeforeFileRead,
+		"beforeReadFile":       EventBeforeFileRead,
 		"afterFileEdit":        EventAfterFileEdit,
 		"afterTabFileEdit":     EventAfterFileEdit,
 		"preToolUse":           EventBeforeTool,
 		"postToolUse":          EventAfterTool,
+		"postToolUseFailure":   EventToolUseFailure,
 		"preCompact":           EventPreCompact,
+		"subagentStart":        EventSubagentStart,
+		"subagentStop":         EventSubagentStop,
 		"stop":                 EventStop,
 	}
 	if normalized, ok := mapping[native]; ok {
