@@ -1,4 +1,8 @@
-# Intentra CLI
+<p align="center">
+  <img src="intentra-cli-logo.png" alt="Intentra CLI" width="400">
+</p>
+
+# Overview
 
 Open-source monitoring tool for AI coding assistants. Captures events from Cursor, Claude Code, Gemini CLI, GitHub Copilot, and Windsurf, normalizes them into a unified schema, and aggregates them into scans.
 

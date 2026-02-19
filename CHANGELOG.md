@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-02-18
+
+### Changed
+- Added logo image to README header
+- Renamed top-level heading from "Intentra CLI" to "Overview"
+
 ## [0.9.0] - 2026-02-17
 
 ### Added
@@ -276,6 +282,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.9.1]: https://github.com/atbabers/intentra-cli/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/atbabers/intentra-cli/compare/v0.8.2...v0.9.0
 [0.8.2]: https://github.com/atbabers/intentra-cli/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/atbabers/intentra-cli/compare/v0.8.0...v0.8.1
