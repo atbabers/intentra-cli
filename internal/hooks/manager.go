@@ -86,8 +86,6 @@ func getWindsurfHooksDir(home string) (string, error) {
 	switch runtime.GOOS {
 	case "windows":
 		return filepath.Join(os.Getenv("APPDATA"), "Windsurf"), nil
-	case "darwin":
-		return filepath.Join(home, ".codeium", "windsurf"), nil
 	default:
 		return filepath.Join(home, ".codeium", "windsurf"), nil
 	}
@@ -954,20 +952,3 @@ func uninstallWindsurf() error {
 	return os.WriteFile(hooksFile, newData, 0600)
 }
 
-// --- Legacy compatibility ---
-
-// GetCursorHooksDir returns the Cursor hooks directory (legacy).
-func GetCursorHooksDir() (string, error) {
-	home, _ := os.UserHomeDir()
-	return getCursorHooksDir(home)
-}
-
-// GenerateHooksJSON generates Cursor hooks.json (legacy alias).
-// Returns empty JSON on error for backward compatibility.
-func GenerateHooksJSON(handlerPath string) string {
-	result, err := GenerateCursorHooksJSON(handlerPath)
-	if err != nil {
-		return "{}"
-	}
-	return result
-}

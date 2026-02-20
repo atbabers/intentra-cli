@@ -35,6 +35,7 @@ func LoadEvents() ([]models.Event, error) {
 
 	var events []models.Event
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
 	for scanner.Scan() {
 		var event models.Event
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {

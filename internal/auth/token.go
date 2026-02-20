@@ -15,7 +15,9 @@ import (
 	"github.com/atbabers/intentra-cli/internal/config"
 )
 
-const defaultAPIEndpoint = "https://api.intentra.sh"
+const maxResponseSize = 10 * 1024 * 1024 // 10 MB
+
+var refreshClient = &http.Client{Timeout: 15 * time.Second}
 
 // Credentials represents stored authentication credentials.
 type Credentials struct {
@@ -147,11 +149,6 @@ func GetValidCredentials() *Credentials {
 	return refreshed
 }
 
-// GetValidCredentialsSecure is an alias for GetValidCredentials using secure storage.
-func GetValidCredentialsSecure() *Credentials {
-	return GetValidCredentials()
-}
-
 // RefreshCredentials uses the refresh token to obtain new credentials.
 func RefreshCredentials(creds *Credentials) (*Credentials, error) {
 	if creds.RefreshToken == "" {
@@ -170,7 +167,7 @@ func RefreshCredentials(creds *Credentials) (*Credentials, error) {
 
 	endpoint := cfg.Server.Endpoint
 	if endpoint == "" {
-		endpoint = defaultAPIEndpoint
+		endpoint = config.DefaultAPIEndpoint
 	}
 
 	url := endpoint + "/oauth/refresh"
@@ -179,13 +176,13 @@ func RefreshCredentials(creds *Credentials) (*Credentials, error) {
 	}
 	payloadBytes, _ := json.Marshal(payload)
 
-	resp, err := http.Post(url, "application/json", bytes.NewReader(payloadBytes))
+	resp, err := refreshClient.Post(url, "application/json", bytes.NewReader(payloadBytes))
 	if err != nil {
 		return nil, fmt.Errorf("refresh request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}

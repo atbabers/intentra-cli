@@ -4,6 +4,7 @@
 package device
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -75,7 +77,9 @@ func getHardwareID() (string, error) {
 // getMacOSHardwareUUID gets the hardware UUID on macOS.
 func getMacOSHardwareUUID() (string, error) {
 	// Use ioreg to get Hardware UUID
-	cmd := exec.Command("ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("ioreg failed: %w", err)
@@ -120,7 +124,9 @@ func getLinuxMachineID() (string, error) {
 // getWindowsMachineGUID gets the machine GUID on Windows.
 func getWindowsMachineGUID() (string, error) {
 	// Query registry for MachineGuid
-	cmd := exec.Command("reg", "query",
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "reg", "query",
 		"HKLM\\SOFTWARE\\Microsoft\\Cryptography",
 		"/v", "MachineGuid")
 	output, err := cmd.Output()
@@ -142,6 +148,33 @@ func getWindowsMachineGUID() (string, error) {
 	return "", fmt.Errorf("MachineGuid not found")
 }
 
+// DeviceMetadata contains device information for API requests.
+type DeviceMetadata struct {
+	Hostname        string `json:"hostname,omitempty"`
+	Username        string `json:"username,omitempty"`
+	Platform        string `json:"platform,omitempty"`
+	OSVersion       string `json:"os_version,omitempty"`
+}
+
+// GetMetadata returns device metadata for API requests.
+func GetMetadata() DeviceMetadata {
+	hostname, _ := os.Hostname()
+
+	username := os.Getenv("USER")
+	if username == "" {
+		username = os.Getenv("USERNAME")
+	}
+
+	osVersion := getOSVersion()
+
+	return DeviceMetadata{
+		Hostname:  hostname,
+		Username:  username,
+		Platform:  runtime.GOOS,
+		OSVersion: osVersion,
+	}
+}
+
 // getFallbackID creates a fallback ID from hostname + username.
 // This is less reliable but works as a last resort.
 func getFallbackID() (string, error) {
@@ -161,52 +194,14 @@ func getFallbackID() (string, error) {
 	return fmt.Sprintf("%s:%s", hostname, username), nil
 }
 
-// VerifyDeviceID checks if a provided device ID matches this device.
-func VerifyDeviceID(providedID string) (bool, error) {
-	currentID, err := GetDeviceID()
-	if err != nil {
-		return false, err
-	}
-	return hmac.Equal([]byte(currentID), []byte(providedID)), nil
-}
-
-// DeviceMetadata contains device information for API requests.
-type DeviceMetadata struct {
-	Hostname        string `json:"hostname,omitempty"`
-	Username        string `json:"username,omitempty"`
-	Platform        string `json:"platform,omitempty"`
-	OSVersion       string `json:"os_version,omitempty"`
-	IntentraVersion string `json:"intentra_version,omitempty"`
-}
-
-// Version is set at build time.
-var Version = "dev"
-
-// GetMetadata returns device metadata for API requests.
-func GetMetadata() DeviceMetadata {
-	hostname, _ := os.Hostname()
-
-	username := os.Getenv("USER")
-	if username == "" {
-		username = os.Getenv("USERNAME")
-	}
-
-	osVersion := getOSVersion()
-
-	return DeviceMetadata{
-		Hostname:        hostname,
-		Username:        username,
-		Platform:        runtime.GOOS,
-		OSVersion:       osVersion,
-		IntentraVersion: Version,
-	}
-}
 
 // getOSVersion returns the OS version string.
 func getOSVersion() string {
 	switch runtime.GOOS {
 	case "darwin":
-		out, err := exec.Command("sw_vers", "-productVersion").Output()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "sw_vers", "-productVersion").Output()
 		if err == nil {
 			return strings.TrimSpace(string(out))
 		}
@@ -221,7 +216,9 @@ func getOSVersion() string {
 			}
 		}
 	case "windows":
-		out, err := exec.Command("cmd", "/c", "ver").Output()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "cmd", "/c", "ver").Output()
 		if err == nil {
 			return strings.TrimSpace(string(out))
 		}

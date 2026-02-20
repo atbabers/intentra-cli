@@ -83,9 +83,7 @@ func IsStopEvent(eventType NormalizedEventType, tool string) bool {
 	switch tool {
 	case "windsurf":
 		return eventType == EventAfterResponse
-	case "copilot":
-		return eventType == EventSessionEnd
-	case "gemini":
+	case "copilot", "gemini":
 		return eventType == EventSessionEnd
 	default:
 		return eventType == EventStop

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sync"
 
 	"github.com/99designs/keyring"
 	"github.com/atbabers/intentra-cli/internal/config"
@@ -17,30 +18,27 @@ const (
 )
 
 var (
-	ring         keyring.Keyring
-	ringOpenErr  error
-	ringAttempted bool
+	ring        keyring.Keyring
+	ringOpenErr error
+	ringOnce    sync.Once
 )
 
 func openKeyring() (keyring.Keyring, error) {
-	if ringAttempted {
-		return ring, ringOpenErr
-	}
-	ringAttempted = true
+	ringOnce.Do(func() {
+		backends := getBackendsForPlatform()
 
-	backends := getBackendsForPlatform()
+		cfg := keyring.Config{
+			ServiceName:                    serviceName,
+			KeychainTrustApplication:       true,
+			KeychainSynchronizable:         false,
+			KeychainAccessibleWhenUnlocked: true,
+			FileDir:                        config.GetConfigDir(),
+			FilePasswordFunc:               filePasswordPrompt,
+			AllowedBackends:                backends,
+		}
 
-	cfg := keyring.Config{
-		ServiceName:                    serviceName,
-		KeychainTrustApplication:       true,
-		KeychainSynchronizable:         false,
-		KeychainAccessibleWhenUnlocked: true,
-		FileDir:                        config.GetConfigDir(),
-		FilePasswordFunc:               filePasswordPrompt,
-		AllowedBackends:                backends,
-	}
-
-	ring, ringOpenErr = keyring.Open(cfg)
+		ring, ringOpenErr = keyring.Open(cfg)
+	})
 	return ring, ringOpenErr
 }
 
@@ -169,6 +167,11 @@ func loadFromCleartextAndMigrate() (*Credentials, error) {
 	}
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "Warning: migration to secure storage panicked: %v\n", r)
+			}
+		}()
 		if err := MigrateToSecureStorage(creds); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: migration to secure storage failed: %v\n", err)
 		}
@@ -206,6 +209,7 @@ func MigrateToSecureStorage(creds *Credentials) error {
 func GetOrCreateCacheKey() ([]byte, error) {
 	kr, err := openKeyring()
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: keyring unavailable, using derived key: %v\n", err)
 		return getDerivedKey()
 	}
 

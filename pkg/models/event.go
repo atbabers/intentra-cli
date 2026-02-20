@@ -67,14 +67,6 @@ func (e *Event) IsMCPEvent() bool {
 	return e.MCPServerName != "" || e.MCPToolName != ""
 }
 
-// EstimateTokens estimates tokens from text length.
-func EstimateTokens(text string, charsPerToken int) int {
-	if charsPerToken <= 0 {
-		charsPerToken = 4
-	}
-	return len(text) / charsPerToken
-}
-
 // SanitizeMCPServerURL strips query parameters from a URL to prevent leaking API keys.
 // Returns only scheme + host + path.
 func SanitizeMCPServerURL(rawURL string) string {

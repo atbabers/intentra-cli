@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/atbabers/intentra-cli/internal/auth"
@@ -19,6 +21,11 @@ import (
 	"github.com/atbabers/intentra-cli/internal/device"
 	"github.com/atbabers/intentra-cli/pkg/models"
 )
+
+const maxResponseSize = 10 * 1024 * 1024 // 10 MB
+
+// UserAgent is the User-Agent header value sent with all API requests.
+const UserAgent = "intentra-cli/1.0"
 
 // ScansResponse represents the response from GET /scans.
 type ScansResponse struct {
@@ -63,102 +70,12 @@ func NewClient(cfg *config.Config) (*Client, error) {
 
 // SendScan sends a single scan to the API.
 func (c *Client) SendScan(scan *models.Scan) error {
-	deviceID, err := c.getDeviceID()
+	deviceID, err := device.GetDeviceID()
 	if err != nil {
 		return fmt.Errorf("failed to get device ID: %w", err)
 	}
 
-	durationMs := int64(0)
-	if !scan.EndTime.IsZero() && !scan.StartTime.IsZero() {
-		durationMs = scan.EndTime.Sub(scan.StartTime).Milliseconds()
-	}
-
-	sessionID := ""
-	if scan.Source != nil {
-		sessionID = scan.Source.SessionID
-	}
-
-	var events []map[string]any
-	if len(scan.RawEvents) > 0 {
-		events = scan.RawEvents
-	} else {
-		for _, ev := range scan.Events {
-			evMap := map[string]any{
-				"hook_type":       string(ev.HookType),
-				"normalized_type": ev.NormalizedType,
-				"timestamp":       ev.Timestamp.Format(time.RFC3339Nano),
-				"tool_name":       ev.ToolName,
-				"command":         ev.Command,
-				"command_output":  ev.CommandOutput,
-				"file_path":       ev.FilePath,
-				"prompt":          ev.Prompt,
-				"response":        ev.Response,
-				"thought":         ev.Thought,
-				"duration_ms":     ev.DurationMs,
-				"conversation_id": ev.ConversationID,
-				"session_id":      ev.SessionID,
-				"tokens": map[string]int{
-					"input":    ev.InputTokens,
-					"output":   ev.OutputTokens,
-					"thinking": ev.ThinkingTokens,
-				},
-			}
-			if len(ev.ToolInput) > 0 {
-				var toolInput map[string]any
-				if err := json.Unmarshal(ev.ToolInput, &toolInput); err == nil {
-					evMap["tool_input"] = toolInput
-				}
-			}
-			if len(ev.ToolOutput) > 0 {
-				var toolOutput any
-				if err := json.Unmarshal(ev.ToolOutput, &toolOutput); err == nil {
-					evMap["tool_output"] = toolOutput
-				}
-			}
-			events = append(events, evMap)
-		}
-	}
-
-	body := map[string]any{
-		"tool":            scan.Tool,
-		"started_at":      scan.StartTime.Format(time.RFC3339Nano),
-		"ended_at":        scan.EndTime.Format(time.RFC3339Nano),
-		"duration_ms":     durationMs,
-		"llm_call_count":  scan.LLMCalls,
-		"total_tokens":    scan.TotalTokens,
-		"estimated_cost":  scan.EstimatedCost,
-		"events":          events,
-		"device_id":       deviceID,
-		"conversation_id": scan.ConversationID,
-		"session_id":      sessionID,
-		"generation_id":   scan.GenerationID,
-		"model":           scan.Model,
-	}
-
-	if len(scan.MCPToolUsage) > 0 {
-		body["mcp_tool_usage"] = scan.MCPToolUsage
-	}
-	if scan.SessionEndReason != "" {
-		body["session_end_reason"] = scan.SessionEndReason
-	}
-	if scan.SessionDurationMs > 0 {
-		body["session_duration_ms"] = scan.SessionDurationMs
-	}
-
-	if scan.RepoName != "" {
-		body["repo_name"] = scan.RepoName
-	}
-	if scan.RepoURLHash != "" {
-		body["repo_url_hash"] = scan.RepoURLHash
-	}
-	if scan.BranchName != "" {
-		body["branch_name"] = scan.BranchName
-	}
-	if len(scan.FilesModified) > 0 {
-		body["files_modified"] = scan.FilesModified
-	}
-
-	jsonBody, err := json.Marshal(body)
+	jsonBody, err := json.Marshal(scan.BuildAPIPayload(deviceID))
 	if err != nil {
 		return fmt.Errorf("failed to marshal scan: %w", err)
 	}
@@ -170,7 +87,7 @@ func (c *Client) SendScan(scan *models.Scan) error {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "intentra-cli/1.0")
+	req.Header.Set("User-Agent", UserAgent)
 
 	if err := c.addAuth(req, jsonBody); err != nil {
 		return fmt.Errorf("failed to add auth: %w", err)
@@ -185,7 +102,7 @@ func (c *Client) SendScan(scan *models.Scan) error {
 	debug.LogHTTP("POST", url, resp.StatusCode)
 
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 		return fmt.Errorf("API returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -202,46 +119,12 @@ func (c *Client) SendScans(scans []*models.Scan) error {
 	return nil
 }
 
-// Health checks API connectivity.
-func (c *Client) Health() error {
-	url := c.cfg.Server.Endpoint + "/health"
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return err
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		debug.LogHTTP("GET", url, 0)
-		return fmt.Errorf("health check failed: %w", err)
-	}
-	defer resp.Body.Close()
-	debug.LogHTTP("GET", url, resp.StatusCode)
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("health check returned: %d", resp.StatusCode)
-	}
-
-	return nil
-}
-
-// getDeviceID returns the device ID (auto-generated from hardware).
-func (c *Client) getDeviceID() (string, error) {
-	return device.GetDeviceID()
-}
-
 // addAuth adds authentication headers based on config.
 // Priority: JWT credentials (from 'intentra login') > config auth mode (api_key)
 func (c *Client) addAuth(req *http.Request, body []byte) error {
 	creds := auth.GetValidCredentials()
 	if creds != nil {
-		req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
-		deviceID, err := c.getDeviceID()
-		if err != nil {
-			return fmt.Errorf("failed to get device ID: %w", err)
-		}
-		req.Header.Set("X-Machine-ID", deviceID)
-		return nil
+		return c.addJWTAuth(req)
 	}
 
 	switch c.cfg.Server.Auth.Mode {
@@ -256,6 +139,10 @@ func (c *Client) addAuth(req *http.Request, body []byte) error {
 // Server expects: X-API-Key-ID, X-API-Key-Secret, X-API-Timestamp, X-API-Nonce
 // The secret is sent directly and verified using bcrypt on the server.
 func (c *Client) addAPIKeyAuth(req *http.Request) error {
+	if !strings.HasPrefix(req.URL.String(), "https://") {
+		return fmt.Errorf("API key auth requires HTTPS; refusing to send credentials over HTTP")
+	}
+
 	keyID := c.cfg.Server.Auth.APIKey.KeyID
 	secret := c.cfg.Server.Auth.APIKey.Secret
 
@@ -288,7 +175,7 @@ func (c *Client) addJWTAuth(req *http.Request) error {
 
 	req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
 
-	deviceID, err := c.getDeviceID()
+	deviceID, err := device.GetDeviceID()
 	if err != nil {
 		return fmt.Errorf("failed to get device ID: %w", err)
 	}
@@ -313,7 +200,7 @@ func (c *Client) GetScans(days, limit int) (*ScansResponse, error) {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("User-Agent", "intentra-cli/1.0")
+	req.Header.Set("User-Agent", UserAgent)
 
 	if err := c.addJWTAuth(req); err != nil {
 		return nil, err
@@ -327,7 +214,7 @@ func (c *Client) GetScans(days, limit int) (*ScansResponse, error) {
 	defer resp.Body.Close()
 	debug.LogHTTP("GET", url, resp.StatusCode)
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -354,14 +241,14 @@ func (c *Client) GetScan(scanID string) (*ScanDetailResponse, error) {
 		return nil, fmt.Errorf("scan ID is required")
 	}
 
-	url := fmt.Sprintf("%s/scans/%s", c.cfg.Server.Endpoint, scanID)
+	url := fmt.Sprintf("%s/scans/%s", c.cfg.Server.Endpoint, url.PathEscape(scanID))
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("User-Agent", "intentra-cli/1.0")
+	req.Header.Set("User-Agent", UserAgent)
 
 	if err := c.addJWTAuth(req); err != nil {
 		return nil, err
@@ -375,7 +262,7 @@ func (c *Client) GetScan(scanID string) (*ScanDetailResponse, error) {
 	defer resp.Body.Close()
 	debug.LogHTTP("GET", url, resp.StatusCode)
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}

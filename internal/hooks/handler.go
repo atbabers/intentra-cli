@@ -30,7 +30,14 @@ import (
 	"github.com/atbabers/intentra-cli/pkg/models"
 )
 
-const maxBufferAge = 30 * time.Minute
+const (
+	maxBufferAge    = 30 * time.Minute
+	maxResponseSize = 10 * 1024 * 1024 // 10 MB
+)
+
+var hookHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+var lastCleanup time.Time
 
 type bufferedEvent struct {
 	Event    *models.Event  `json:"event"`
@@ -103,14 +110,15 @@ func readAndClearBuffer(sessionKey string) ([]bufferedEvent, error) {
 	os.Remove(bufferPath)
 
 	var events []bufferedEvent
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	sc.Buffer(make([]byte, 64*1024), 10*1024*1024)
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
 			continue
 		}
 		var entry bufferedEvent
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		if err := json.Unmarshal(line, &entry); err != nil {
 			continue
 		}
 		events = append(events, entry)
@@ -120,6 +128,11 @@ func readAndClearBuffer(sessionKey string) ([]bufferedEvent, error) {
 }
 
 func cleanupStaleBuffers() {
+	if time.Since(lastCleanup) <= maxBufferAge {
+		return
+	}
+	lastCleanup = time.Now()
+
 	patterns := []string{
 		filepath.Join(os.TempDir(), "intentra_buffer_*.jsonl"),
 		filepath.Join(os.TempDir(), "intentra_lastscan_*.txt"),
@@ -252,34 +265,15 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 		}
 	}
 
-	modelPricing := map[string]float64{
-		"claude-sonnet-4":   0.003,
-		"claude-3-5-sonnet": 0.003,
-		"claude-3-5-haiku":  0.00025,
-		"claude-3-opus":     0.015,
-		"gemini":            0.0001,
-		"gpt-4o":            0.005,
-		"gpt-4":             0.03,
-		"gpt-3.5":           0.0005,
-		"o1":                0.015,
-	}
-	price := 0.003
-	if tool == "copilot" {
-		price = 0.005
-	} else if tool == "windsurf" {
-		price = 0.003
-	}
 	model := scan.Model
 	if model == "" {
-		model = "claude-3-5-sonnet"
-	}
-	for prefix, p := range modelPricing {
-		if strings.HasPrefix(model, prefix) {
-			price = p
-			break
+		if tool == "copilot" {
+			model = "gpt-4o"
+		} else {
+			model = "claude-3-5-sonnet"
 		}
 	}
-	scan.EstimatedCost = float64(scan.TotalTokens) / 1000.0 * price
+	scan.EstimatedCost = scanner.EstimateCost(scan.TotalTokens, model)
 
 	scan.MCPToolUsage = aggregateMCPToolUsage(events, scan.EstimatedCost)
 
@@ -327,7 +321,6 @@ func aggregateMCPToolUsage(events []bufferedEvent, totalScanCost float64) []mode
 	}
 
 	usage := make(map[mcpKey]*models.MCPToolCall)
-	totalMCPDuration := 0
 	totalScanDuration := 0
 
 	for _, entry := range events {
@@ -357,7 +350,6 @@ func aggregateMCPToolUsage(events []bufferedEvent, totalScanCost float64) []mode
 
 		call.CallCount++
 		call.TotalDuration += ev.DurationMs
-		totalMCPDuration += ev.DurationMs
 
 		if ev.Error != "" {
 			call.ErrorCount++
@@ -454,7 +446,9 @@ func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, 
 	}
 
 	if toolOutput, ok := raw["tool_output"].(string); ok {
-		event.ToolOutput = json.RawMessage(`"` + toolOutput + `"`)
+		if escaped, err := json.Marshal(toolOutput); err == nil {
+			event.ToolOutput = json.RawMessage(escaped)
+		}
 	} else if toolOutput, ok := raw["tool_output"].(map[string]any); ok {
 		if outputJSON, err := json.Marshal(toolOutput); err == nil {
 			event.ToolOutput = outputJSON
@@ -625,9 +619,7 @@ func extractMCPMetadata(event *models.Event, raw map[string]any, tool string, no
 		extractCursorMCP(event, raw)
 	case "windsurf":
 		extractWindsurfMCP(event, raw)
-	case "claude":
-		extractClaudeGeminiMCP(event, raw)
-	case "gemini":
+	case "claude", "gemini":
 		extractClaudeGeminiMCP(event, raw)
 	case "copilot":
 		extractCopilotMCP(event, raw)
@@ -810,16 +802,12 @@ func extractHostFromURL(rawURL string) string {
 	return host
 }
 
-// ProcessEvent reads an event from stdin and sends directly to API.
-func ProcessEvent(reader io.Reader, cfg *config.Config, tool string) error {
-	return ProcessEventWithEvent(reader, cfg, tool, "")
-}
-
 // ProcessEventWithEvent buffers events and sends aggregated scan on stop events.
 func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType string) error {
 	cleanupStaleBuffers()
 
 	bufScanner := bufio.NewScanner(reader)
+	bufScanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
 	if !bufScanner.Scan() {
 		if err := bufScanner.Err(); err != nil {
 			return fmt.Errorf("failed to read input: %w", err)
@@ -969,16 +957,6 @@ func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType
 	return nil
 }
 
-// RunHookHandler is the main entry point for hook processing.
-func RunHookHandler() error {
-	return RunHookHandlerWithToolAndEvent("", "")
-}
-
-// RunHookHandlerWithTool processes hooks with tool identifier.
-func RunHookHandlerWithTool(tool string) error {
-	return RunHookHandlerWithToolAndEvent(tool, "")
-}
-
 // RunHookHandlerWithToolAndEvent processes hooks with tool and event identifiers.
 func RunHookHandlerWithToolAndEvent(tool, event string) error {
 	cfg, err := config.Load()
@@ -991,8 +969,6 @@ func RunHookHandlerWithToolAndEvent(tool, event string) error {
 	return ProcessEventWithEvent(os.Stdin, cfg, tool, event)
 }
 
-const defaultAPIEndpoint = "https://api.intentra.sh"
-
 // syncScanWithJWT sends a scan to the default API endpoint using JWT auth.
 func syncScanWithJWT(scan *models.Scan, accessToken string) error {
 	deviceID, err := device.GetDeviceID()
@@ -1000,136 +976,23 @@ func syncScanWithJWT(scan *models.Scan, accessToken string) error {
 		return fmt.Errorf("failed to get device ID: %w", err)
 	}
 
-	durationMs := int64(0)
-	if !scan.EndTime.IsZero() && !scan.StartTime.IsZero() {
-		durationMs = scan.EndTime.Sub(scan.StartTime).Milliseconds()
-	}
-
-	sessionID := ""
-	if scan.Source != nil {
-		sessionID = scan.Source.SessionID
-	}
-
-	var events []map[string]any
-	if len(scan.RawEvents) > 0 {
-		events = scan.RawEvents
-	} else {
-		for _, ev := range scan.Events {
-			evMap := map[string]any{
-				"hook_type":       string(ev.HookType),
-				"normalized_type": ev.NormalizedType,
-				"timestamp":       ev.Timestamp.Format(time.RFC3339Nano),
-				"tool_name":       ev.ToolName,
-				"command":         ev.Command,
-				"command_output":  ev.CommandOutput,
-				"file_path":       ev.FilePath,
-				"prompt":          ev.Prompt,
-				"response":        ev.Response,
-				"thought":         ev.Thought,
-				"duration_ms":     ev.DurationMs,
-				"conversation_id": ev.ConversationID,
-				"session_id":      ev.SessionID,
-				"tokens": map[string]int{
-					"input":    ev.InputTokens,
-					"output":   ev.OutputTokens,
-					"thinking": ev.ThinkingTokens,
-				},
-			}
-			if ev.CompactionTrigger != "" {
-				evMap["compaction_trigger"] = ev.CompactionTrigger
-			}
-			if ev.ContextUsagePercent > 0 {
-				evMap["context_usage_percent"] = ev.ContextUsagePercent
-			}
-			if ev.ContextTokens > 0 {
-				evMap["context_tokens"] = ev.ContextTokens
-			}
-			if ev.ContextWindowSize > 0 {
-				evMap["context_window_size"] = ev.ContextWindowSize
-			}
-			if ev.MessageCount > 0 {
-				evMap["message_count"] = ev.MessageCount
-			}
-			if ev.MessagesToCompact > 0 {
-				evMap["messages_to_compact"] = ev.MessagesToCompact
-			}
-			if ev.IsFirstCompaction != nil {
-				evMap["is_first_compaction"] = *ev.IsFirstCompaction
-			}
-			if len(ev.ToolInput) > 0 {
-				var toolInput map[string]any
-				if err := json.Unmarshal(ev.ToolInput, &toolInput); err == nil {
-					evMap["tool_input"] = toolInput
-				}
-			}
-			if len(ev.ToolOutput) > 0 {
-				var toolOutput any
-				if err := json.Unmarshal(ev.ToolOutput, &toolOutput); err == nil {
-					evMap["tool_output"] = toolOutput
-				}
-			}
-			events = append(events, evMap)
-		}
-	}
-
-	body := map[string]any{
-		"tool":            scan.Tool,
-		"started_at":      scan.StartTime.Format(time.RFC3339Nano),
-		"ended_at":        scan.EndTime.Format(time.RFC3339Nano),
-		"duration_ms":     durationMs,
-		"llm_call_count":  scan.LLMCalls,
-		"total_tokens":    scan.TotalTokens,
-		"estimated_cost":  scan.EstimatedCost,
-		"events":          events,
-		"device_id":       deviceID,
-		"conversation_id": scan.ConversationID,
-		"session_id":      sessionID,
-		"generation_id":   scan.GenerationID,
-		"model":           scan.Model,
-	}
-
-	if len(scan.MCPToolUsage) > 0 {
-		body["mcp_tool_usage"] = scan.MCPToolUsage
-	}
-
-	if scan.SessionEndReason != "" {
-		body["session_end_reason"] = scan.SessionEndReason
-	}
-	if scan.SessionDurationMs > 0 {
-		body["session_duration_ms"] = scan.SessionDurationMs
-	}
-
-	if scan.RepoName != "" {
-		body["repo_name"] = scan.RepoName
-	}
-	if scan.RepoURLHash != "" {
-		body["repo_url_hash"] = scan.RepoURLHash
-	}
-	if scan.BranchName != "" {
-		body["branch_name"] = scan.BranchName
-	}
-	if len(scan.FilesModified) > 0 {
-		body["files_modified"] = scan.FilesModified
-	}
-
-	jsonBody, err := json.Marshal(body)
+	jsonBody, err := json.Marshal(scan.BuildAPIPayload(deviceID))
 	if err != nil {
 		return fmt.Errorf("failed to marshal scan: %w", err)
 	}
 
-	url := defaultAPIEndpoint + "/scans"
+	url := config.DefaultAPIEndpoint + "/scans"
 	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "intentra-cli/1.0")
+	req.Header.Set("User-Agent", api.UserAgent)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("X-Machine-ID", deviceID)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := hookHTTPClient.Do(req)
 	if err != nil {
 		debug.LogHTTP("POST", url, 0)
 		return fmt.Errorf("request failed: %w", err)
@@ -1138,7 +1001,7 @@ func syncScanWithJWT(scan *models.Scan, accessToken string) error {
 	debug.LogHTTP("POST", url, resp.StatusCode)
 
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 		return fmt.Errorf("API returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -1168,19 +1031,18 @@ func patchSessionEnd(scanID, accessToken, reason string, durationMs int64) error
 		return fmt.Errorf("failed to marshal session end body: %w", err)
 	}
 
-	patchURL := defaultAPIEndpoint + "/scans/" + url.PathEscape(scanID) + "/session"
+	patchURL := config.DefaultAPIEndpoint + "/scans/" + url.PathEscape(scanID) + "/session"
 	req, err := http.NewRequest("PATCH", patchURL, bytes.NewReader(jsonBody))
 	if err != nil {
 		return fmt.Errorf("failed to create PATCH request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "intentra-cli/1.0")
+	req.Header.Set("User-Agent", api.UserAgent)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("X-Machine-ID", deviceID)
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := hookHTTPClient.Do(req)
 	if err != nil {
 		debug.LogHTTP("PATCH", patchURL, 0)
 		return fmt.Errorf("PATCH request failed: %w", err)
@@ -1189,7 +1051,7 @@ func patchSessionEnd(scanID, accessToken, reason string, durationMs int64) error
 	debug.LogHTTP("PATCH", patchURL, resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 		return fmt.Errorf("PATCH returned %d: %s", resp.StatusCode, string(respBody))
 	}
 

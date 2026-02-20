@@ -11,24 +11,25 @@ func init() {
 // Tool returns the tool identifier.
 func (n *ClaudeNormalizer) Tool() string { return "claude" }
 
+var claudeEventMapping = map[string]NormalizedEventType{
+	"SessionStart":       EventSessionStart,
+	"SessionEnd":         EventSessionEnd,
+	"UserPromptSubmit":   EventBeforePrompt,
+	"PreToolUse":         EventBeforeTool,
+	"PostToolUse":        EventAfterTool,
+	"PostToolUseFailure": EventAfterTool,
+	"PermissionRequest":  EventPermissionRequest,
+	"Notification":       EventNotification,
+	"Stop":               EventStop,
+	"SubagentStart":      EventBeforePrompt,
+	"SubagentStop":       EventSubagentStop,
+	"PreCompact":         EventPreCompact,
+	"Setup":              EventSessionStart,
+}
+
 // NormalizeEventType converts Claude Code PascalCase events to snake_case normalized types.
 func (n *ClaudeNormalizer) NormalizeEventType(native string) NormalizedEventType {
-	mapping := map[string]NormalizedEventType{
-		"SessionStart":       EventSessionStart,
-		"SessionEnd":         EventSessionEnd,
-		"UserPromptSubmit":   EventBeforePrompt,
-		"PreToolUse":         EventBeforeTool,
-		"PostToolUse":        EventAfterTool,
-		"PostToolUseFailure": EventAfterTool,
-		"PermissionRequest":  EventPermissionRequest,
-		"Notification":       EventNotification,
-		"Stop":               EventStop,
-		"SubagentStart":      EventBeforePrompt,
-		"SubagentStop":       EventSubagentStop,
-		"PreCompact":         EventPreCompact,
-		"Setup":              EventSessionStart,
-	}
-	if normalized, ok := mapping[native]; ok {
+	if normalized, ok := claudeEventMapping[native]; ok {
 		return normalized
 	}
 	return EventUnknown

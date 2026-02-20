@@ -4,12 +4,10 @@
 package scanner
 
 import (
-	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/atbabers/intentra-cli/pkg/models"
 )
@@ -96,7 +94,7 @@ func createScan(conversationID string, events []models.Event) models.Scan {
 	}
 
 	scan.TotalTokens = scan.InputTokens + scan.OutputTokens + scan.ThinkingTokens
-	scan.EstimatedCost = estimateCost(scan.TotalTokens, getModel(events))
+	scan.EstimatedCost = EstimateCost(scan.TotalTokens, getModel(events))
 
 	scan.Fingerprint = calculateFingerprint(events)
 	scan.FilesHash = calculateFilesHash(events)
@@ -114,9 +112,11 @@ func getModel(events []models.Event) string {
 	return "claude-3-5-sonnet"
 }
 
-func estimateCost(tokens int, model string) float64 {
+// EstimateCost calculates the estimated cost for a given number of tokens and model.
+// Falls back to a default price of $0.003/1K tokens if the model is not recognized.
+func EstimateCost(tokens int, model string) float64 {
 	for prefix, price := range modelPricing {
-		if len(model) >= len(prefix) && model[:len(prefix)] == prefix {
+		if strings.HasPrefix(model, prefix) {
 			return float64(tokens) / 1000.0 * price
 		}
 	}
@@ -143,7 +143,7 @@ func calculateFingerprint(events []models.Event) string {
 
 	sort.Strings(prompts)
 	combined := strings.Join(prompts, "|")
-	hash := md5.Sum([]byte(combined))
+	hash := sha256.Sum256([]byte(combined))
 	return hex.EncodeToString(hash[:])[:16]
 }
 
@@ -166,7 +166,7 @@ func calculateFilesHash(events []models.Event) string {
 	sort.Strings(files)
 
 	combined := strings.Join(files, "|")
-	hash := md5.Sum([]byte(combined))
+	hash := sha256.Sum256([]byte(combined))
 	return hex.EncodeToString(hash[:])[:8]
 }
 
@@ -204,7 +204,7 @@ func calculateActionCounts(events []models.Event) map[string]int {
 }
 
 // AggregateFilesModified builds per-file edit statistics from a slice of events.
-func AggregateFilesModified(events []models.Event) []map[string]interface{} {
+func AggregateFilesModified(events []models.Event) []map[string]any {
 	type fileStats struct {
 		linesAdded   int
 		linesRemoved int
@@ -243,12 +243,12 @@ func AggregateFilesModified(events []models.Event) []map[string]interface{} {
 		return nil
 	}
 
-	var result []map[string]interface{}
+	var result []map[string]any
 	for path, s := range stats {
 		if s.editCount == 0 {
 			continue
 		}
-		entry := map[string]interface{}{
+		entry := map[string]any{
 			"file_path":     path,
 			"is_new_file":   s.isNew,
 			"lines_added":   s.linesAdded,
@@ -261,53 +261,3 @@ func AggregateFilesModified(events []models.Event) []map[string]interface{} {
 	return result
 }
 
-// CreateScanFromEvent creates a scan from a single event for immediate sync.
-func CreateScanFromEvent(event models.Event) *models.Scan {
-	// Generate scan ID
-	idSource := event.ConversationID
-	if idSource == "" {
-		idSource = event.DeviceID + event.Timestamp.String()
-	}
-	hash := sha256.Sum256([]byte(idSource + event.Timestamp.String()))
-	scanID := "scan_" + hex.EncodeToString(hash[:])[:12]
-
-	scan := &models.Scan{
-		ID:             scanID,
-		DeviceID:       event.DeviceID,
-		Timestamp:      event.Timestamp.Format(time.RFC3339Nano),
-		Tool:           event.Tool,
-		ConversationID: event.ConversationID,
-		Status:         models.ScanStatusPending,
-		StartTime:      event.Timestamp,
-		EndTime:        event.Timestamp,
-		Source: &models.ScanSource{
-			Tool:      event.Tool,
-			Event:     string(event.HookType),
-			ToolName:  event.ToolName,
-			SessionID: event.SessionID,
-		},
-		Content: &models.ScanContent{
-			Prompt:    event.Prompt,
-			Response:  event.Response,
-			ToolInput: event.ToolInput,
-		},
-	}
-
-	// Add the event (this also updates metrics)
-	scan.AddEvent(event)
-
-	// Calculate cost
-	model := event.Model
-	if model == "" {
-		model = "claude-3-5-sonnet"
-	}
-	scan.EstimatedCost = estimateCost(scan.TotalTokens, model)
-
-	// Calculate cross-scan detection metadata
-	events := []models.Event{event}
-	scan.Fingerprint = calculateFingerprint(events)
-	scan.FilesHash = calculateFilesHash(events)
-	scan.ActionCounts = calculateActionCounts(events)
-
-	return scan
-}

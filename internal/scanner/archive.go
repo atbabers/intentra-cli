@@ -12,7 +12,7 @@ import (
 	"github.com/atbabers/intentra-cli/pkg/models"
 )
 
-type ArchivedScan struct {
+type archivedScan struct {
 	ID              string          `json:"scan_id"`
 	DeviceID        string          `json:"device_id,omitempty"`
 	Tool            string          `json:"tool,omitempty"`
@@ -32,10 +32,10 @@ type ArchivedScan struct {
 	EventCount      int             `json:"event_count"`
 	EventTypeCounts map[string]int  `json:"event_type_counts,omitempty"`
 	ArchivedAt      time.Time       `json:"archived_at"`
-	Events          []ArchivedEvent `json:"events,omitempty"`
+	Events          []archivedEvent `json:"events,omitempty"`
 }
 
-type ArchivedEvent struct {
+type archivedEvent struct {
 	HookType       string    `json:"hook_type"`
 	Timestamp      time.Time `json:"timestamp"`
 	SessionID      string    `json:"session_id,omitempty"`
@@ -50,7 +50,7 @@ type ArchivedEvent struct {
 	ContentHash    string    `json:"content_hash,omitempty"`
 }
 
-func ArchiveScan(scan *models.Scan, cfg *config.Config) error {
+func archiveScan(scan *models.Scan, cfg *config.Config) error {
 	if !cfg.Local.Archive.Enabled {
 		return nil
 	}
@@ -65,7 +65,7 @@ func ArchiveScan(scan *models.Scan, cfg *config.Config) error {
 		return err
 	}
 
-	archived := createArchivedScan(scan, cfg)
+	archived := createarchivedScan(scan, cfg)
 
 	if err := validateScanID(scan.ID); err != nil {
 		return err
@@ -80,7 +80,7 @@ func ArchiveScan(scan *models.Scan, cfg *config.Config) error {
 	return os.WriteFile(filename, data, 0600)
 }
 
-func createArchivedScan(scan *models.Scan, cfg *config.Config) *ArchivedScan {
+func createarchivedScan(scan *models.Scan, cfg *config.Config) *archivedScan {
 	eventTypeCounts := make(map[string]int)
 	for _, e := range scan.Events {
 		eventTypeCounts[string(e.HookType)]++
@@ -88,7 +88,7 @@ func createArchivedScan(scan *models.Scan, cfg *config.Config) *ArchivedScan {
 
 	eventsHash := hashEvents(scan.Events)
 
-	archived := &ArchivedScan{
+	archived := &archivedScan{
 		ID:              scan.ID,
 		DeviceID:        scan.DeviceID,
 		Tool:            scan.Tool,
@@ -121,10 +121,10 @@ func createArchivedScan(scan *models.Scan, cfg *config.Config) *ArchivedScan {
 	return archived
 }
 
-func redactEvents(events []models.Event, redacted bool) []ArchivedEvent {
-	archived := make([]ArchivedEvent, len(events))
+func redactEvents(events []models.Event, redacted bool) []archivedEvent {
+	archived := make([]archivedEvent, len(events))
 	for i, e := range events {
-		ae := ArchivedEvent{
+		ae := archivedEvent{
 			HookType:       string(e.HookType),
 			Timestamp:      e.Timestamp,
 			SessionID:      e.SessionID,

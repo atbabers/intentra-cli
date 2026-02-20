@@ -48,29 +48,6 @@ func TestEventUnmarshal_WithNewFields(t *testing.T) {
 	}
 }
 
-func TestEstimateTokens(t *testing.T) {
-	tests := []struct {
-		name          string
-		text          string
-		charsPerToken int
-		expected      int
-	}{
-		{"empty text", "", 4, 0},
-		{"short text", "hello", 4, 1},
-		{"default chars per token", "hello world test", 0, 4},
-		{"custom chars per token", "hello world", 2, 5},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := EstimateTokens(tt.text, tt.charsPerToken)
-			if result != tt.expected {
-				t.Errorf("EstimateTokens(%q, %d) = %d, want %d", tt.text, tt.charsPerToken, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestScanMarshal(t *testing.T) {
 	scan := Scan{
 		ID:           "scan-123",

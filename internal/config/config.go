@@ -7,10 +7,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 )
+
+// DefaultAPIEndpoint is the default Intentra API server endpoint.
+const DefaultAPIEndpoint = "https://api.intentra.sh"
 
 // Config represents the intentra configuration.
 type Config struct {
@@ -257,6 +261,9 @@ func (c *Config) Validate() error {
 		if c.Server.Auth.APIKey.KeyID == "" || c.Server.Auth.APIKey.Secret == "" {
 			return fmt.Errorf("api_key auth requires key_id and secret")
 		}
+		if !strings.HasPrefix(c.Server.Endpoint, "https://") {
+			return fmt.Errorf("api_key auth requires HTTPS endpoint")
+		}
 	case "":
 		return nil
 	default:
@@ -421,14 +428,3 @@ func SaveConfig(cfg *Config) error {
 	return v.WriteConfigAs(configPath)
 }
 
-// --- Legacy compatibility ---
-
-// APIKey returns the Anthropic API key (legacy compatibility).
-func (c *Config) APIKey() string {
-	return c.Local.AnthropicAPIKey
-}
-
-// Model returns the model name (legacy compatibility).
-func (c *Config) Model() string {
-	return c.Local.Model
-}

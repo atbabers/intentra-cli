@@ -11,17 +11,18 @@ func init() {
 // Tool returns the tool identifier.
 func (n *CopilotNormalizer) Tool() string { return "copilot" }
 
+var copilotEventMapping = map[string]NormalizedEventType{
+	"sessionStart":        EventSessionStart,
+	"sessionEnd":          EventSessionEnd,
+	"userPromptSubmitted": EventBeforePrompt,
+	"preToolUse":          EventBeforeTool,
+	"postToolUse":         EventAfterTool,
+	"errorOccurred":       EventError,
+}
+
 // NormalizeEventType converts GitHub Copilot camelCase events to snake_case normalized types.
 func (n *CopilotNormalizer) NormalizeEventType(native string) NormalizedEventType {
-	mapping := map[string]NormalizedEventType{
-		"sessionStart":        EventSessionStart,
-		"sessionEnd":          EventSessionEnd,
-		"userPromptSubmitted": EventBeforePrompt,
-		"preToolUse":          EventBeforeTool,
-		"postToolUse":         EventAfterTool,
-		"errorOccurred":       EventError,
-	}
-	if normalized, ok := mapping[native]; ok {
+	if normalized, ok := copilotEventMapping[native]; ok {
 		return normalized
 	}
 	return EventUnknown

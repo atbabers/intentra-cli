@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/atbabers/intentra-cli/internal/config"
 	"golang.org/x/crypto/hkdf"
@@ -25,11 +27,11 @@ const (
 	keySize               = 32
 )
 
-func GetEncryptedCacheFile() string {
+func getEncryptedCacheFile() string {
 	return filepath.Join(config.GetConfigDir(), "credentials.enc")
 }
 
-func GetCacheKeyFile() string {
+func getCacheKeyFile() string {
 	return filepath.Join(config.GetConfigDir(), ".cache-key")
 }
 
@@ -57,13 +59,7 @@ func WriteEncryptedCache(creds *Credentials) error {
 	data[0] = encryptedCacheVersion
 	copy(data[1:], ciphertext)
 
-	keyFile := GetCacheKeyFile()
-	os.Remove(keyFile)
-	if err := os.WriteFile(keyFile, key, 0400); err != nil {
-		return fmt.Errorf("failed to write key file: %w", err)
-	}
-
-	cacheFile := GetEncryptedCacheFile()
+	cacheFile := getEncryptedCacheFile()
 	tempFile := cacheFile + ".tmp"
 	if err := os.WriteFile(tempFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to write encrypted cache: %w", err)
@@ -78,7 +74,7 @@ func WriteEncryptedCache(creds *Credentials) error {
 }
 
 func ReadEncryptedCache() (*Credentials, error) {
-	cacheFile := GetEncryptedCacheFile()
+	cacheFile := getEncryptedCacheFile()
 	data, err := os.ReadFile(cacheFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -115,12 +111,12 @@ func ReadEncryptedCache() (*Credentials, error) {
 }
 
 func DeleteEncryptedCache() error {
-	cacheFile := GetEncryptedCacheFile()
+	cacheFile := getEncryptedCacheFile()
 	if err := os.Remove(cacheFile); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 
-	keyFile := GetCacheKeyFile()
+	keyFile := getCacheKeyFile()
 	if err := os.Remove(keyFile); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -129,7 +125,7 @@ func DeleteEncryptedCache() error {
 }
 
 func readCacheKey() ([]byte, error) {
-	keyFile := GetCacheKeyFile()
+	keyFile := getCacheKeyFile()
 	key, err := os.ReadFile(keyFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -254,7 +250,9 @@ func getLinuxMachineID() (string, error) {
 }
 
 func getDarwinMachineID() (string, error) {
-	cmd := exec.Command("ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -276,7 +274,9 @@ func getDarwinMachineID() (string, error) {
 }
 
 func getWindowsMachineID() (string, error) {
-	cmd := exec.Command("reg", "query", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "reg", "query", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err

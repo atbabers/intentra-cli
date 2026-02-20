@@ -9,6 +9,7 @@ import (
 	"github.com/atbabers/intentra-cli/internal/config"
 	"github.com/atbabers/intentra-cli/internal/hooks"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 func newHooksCmd() *cobra.Command {
@@ -28,20 +29,28 @@ func saveAPIConfig(server, keyID, secret string) error {
 		return err
 	}
 
-	configContent := fmt.Sprintf(`server:
-  enabled: true
-  endpoint: "%s"
-  timeout: 30s
-  auth:
-    mode: "hmac"
-    hmac:
-      key_id: "%s"
-      secret: "%s"
-      device_id: ""
-`, server, keyID, secret)
+	configData := map[string]any{
+		"server": map[string]any{
+			"enabled":  true,
+			"endpoint": server,
+			"timeout":  "30s",
+			"auth": map[string]any{
+				"mode": "api_key",
+				"api_key": map[string]any{
+					"key_id": keyID,
+					"secret": secret,
+				},
+			},
+		},
+	}
+
+	configContent, err := yaml.Marshal(configData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
 
 	configPath := filepath.Join(configDir, "config.yaml")
-	return os.WriteFile(configPath, []byte(configContent), 0600)
+	return os.WriteFile(configPath, configContent, 0600)
 }
 
 func newHooksStatusCmd() *cobra.Command {

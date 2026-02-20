@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-02-19
+
+### Added
+- `BuildAPIPayload` method on Scan model, consolidating duplicated payload construction from API client and hook handler
+- HTTPS-only enforcement for API key authentication (config validation and runtime check)
+- URL validation in `openBrowser` (rejects non-HTTPS URLs)
+- `url.PathEscape` for all user-supplied path segments in API URLs
+- `io.LimitReader` (10 MB cap) on all HTTP response body reads to prevent memory exhaustion
+- Context timeouts (5 seconds) on all external command executions (`ioreg`, `reg query`, `sw_vers`)
+- `sync.Once` for thread-safe keyring initialization
+- Panic recovery in background keystore migration goroutine
+- Larger `bufio.Scanner` buffers (10 MB) for reading large JSONL event files
+- Stale buffer cleanup throttling (at most once per 30 minutes)
+- Proper JSON escaping for string `tool_output` values via `json.Marshal`
+
+### Changed
+- Replaced MD5 with SHA-256 for fingerprint and files hash calculations
+- Moved `defaultAPIEndpoint` to `config.DefaultAPIEndpoint` (single source of truth)
+- Moved User-Agent constant to `api.UserAgent`
+- Event normalizer maps promoted from function-scoped to package-level variables
+- Config generation in `saveAPIConfig` uses `yaml.Marshal` instead of string interpolation
+- Reused shared `http.Client` instances instead of creating new ones per request
+- Windows `openBrowser` uses `rundll32` instead of `cmd /c start`
+- Replaced `interface{}` with `any` throughout
+- Cost estimation in hook handler now delegates to `scanner.EstimateCost`
+
+### Removed
+- `EstimateTokens` function and tests (unused)
+- `VerifyDeviceID` function and tests (unused)
+- `GetValidCredentialsSecure` alias (was identical to `GetValidCredentials`)
+- `Health` method on API client (unused)
+- `ProcessEvent`, `RunHookHandler`, `RunHookHandlerWithTool` wrappers (unused)
+- `CreateScanFromEvent` function (unused)
+- `TryWithCredentialLock` function (unused)
+- `ScanContent` struct and `Content` field on Scan (unused)
+- `ScanStatusRejected` constant (unused)
+- `Scan.Duration()` and `Scan.AddEvent()` methods (unused)
+- `RefundLikelihood`, `RefundAmount`, `Summary`, `AcceptedLines`, `Timestamp` fields from Scan (unused)
+- `IntentraVersion` from `DeviceMetadata` and `Version` variable (build version tracked elsewhere)
+- Legacy compatibility methods: `Config.APIKey()`, `Config.Model()`, `GetCursorHooksDir()`, `GenerateHooksJSON()`
+- Duplicate darwin case in `getWindsurfHooksDir`
+- Inline model pricing map in hook handler (replaced by `scanner.EstimateCost`)
+
+### Security
+- All HTTP response reads capped at 10 MB to prevent denial-of-service via large payloads
+- API key credentials refused over non-HTTPS connections
+- Browser open command validates HTTPS scheme before execution
+- SHA-256 replaces MD5 for internal hashing
+- External commands run with 5-second timeouts to prevent indefinite hangs
+
 ## [0.9.1] - 2026-02-18
 
 ### Changed
@@ -282,6 +332,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.10.0]: https://github.com/atbabers/intentra-cli/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/atbabers/intentra-cli/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/atbabers/intentra-cli/compare/v0.8.2...v0.9.0
 [0.8.2]: https://github.com/atbabers/intentra-cli/compare/v0.8.1...v0.8.2

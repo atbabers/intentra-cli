@@ -6,19 +6,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"time"
 
 	"github.com/atbabers/intentra-cli/internal/auth"
+	"github.com/atbabers/intentra-cli/internal/config"
 	"github.com/atbabers/intentra-cli/internal/debug"
 	"github.com/atbabers/intentra-cli/internal/device"
 	"github.com/spf13/cobra"
 )
 
-const (
-	defaultAPIEndpoint = "https://api.intentra.sh"
-)
+const maxResponseSize = 10 * 1024 * 1024 // 10 MB
 
 func newLoginCmd() *cobra.Command {
 	var noBrowser bool
@@ -84,7 +84,7 @@ func runLogin(noBrowser bool) error {
 
 	endpoint := cfg.Server.Endpoint
 	if endpoint == "" {
-		endpoint = defaultAPIEndpoint
+		endpoint = config.DefaultAPIEndpoint
 	}
 
 	fmt.Println("Initiating device authorization...")
@@ -190,7 +190,7 @@ func runStatus() error {
 
 	endpoint := cfg.Server.Endpoint
 	if endpoint == "" {
-		endpoint = defaultAPIEndpoint
+		endpoint = config.DefaultAPIEndpoint
 	}
 
 	profile, err := fetchUserProfile(endpoint, creds.AccessToken)
@@ -255,7 +255,7 @@ func fetchUserProfile(endpoint, accessToken string) (*userProfile, error) {
 	defer resp.Body.Close()
 	debug.LogHTTP("GET", url, resp.StatusCode)
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -275,7 +275,7 @@ func fetchUserProfile(endpoint, accessToken string) (*userProfile, error) {
 }
 
 func fetchOrganization(endpoint, accessToken, orgID string) (*organization, error) {
-	url := endpoint + "/orgs/" + orgID
+	url := endpoint + "/orgs/" + url.PathEscape(orgID)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -296,7 +296,7 @@ func fetchOrganization(endpoint, accessToken, orgID string) (*organization, erro
 		return nil, fmt.Errorf("failed to fetch organization: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -332,7 +332,7 @@ func requestDeviceCode(endpoint string) (*auth.DeviceCodeResponse, error) {
 	defer resp.Body.Close()
 	debug.LogHTTP("POST", url, resp.StatusCode)
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -377,7 +377,7 @@ func pollForToken(endpoint string, deviceResp *auth.DeviceCodeResponse) (*auth.T
 			continue
 		}
 
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 		resp.Body.Close()
 		debug.LogHTTP("POST", url, resp.StatusCode)
 
@@ -413,20 +413,26 @@ func pollForToken(endpoint string, deviceResp *auth.DeviceCodeResponse) (*auth.T
 	}
 }
 
-func openBrowser(url string) error {
-	var cmd *exec.Cmd
+func openBrowser(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("refusing to open non-HTTPS URL: %s", parsed.Scheme)
+	}
 
+	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", rawURL)
 	case "linux":
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", rawURL)
 	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL)
 	default:
 		return fmt.Errorf("unsupported platform")
 	}
-
 	return cmd.Start()
 }
 
@@ -466,7 +472,7 @@ func registerMachine(endpoint, accessToken string) error {
 	defer resp.Body.Close()
 	debug.LogHTTP("POST", url, resp.StatusCode)
 
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusCreated:

@@ -33,37 +33,11 @@ func TestGetDeviceID_Deterministic(t *testing.T) {
 	}
 }
 
-func TestVerifyDeviceID(t *testing.T) {
-	id, err := GetDeviceID()
-	if err != nil {
-		t.Fatalf("GetDeviceID failed: %v", err)
-	}
-
-	match, err := VerifyDeviceID(id)
-	if err != nil {
-		t.Fatalf("VerifyDeviceID failed: %v", err)
-	}
-	if !match {
-		t.Error("VerifyDeviceID should return true for current device ID")
-	}
-
-	match, err = VerifyDeviceID("invalid-device-id")
-	if err != nil {
-		t.Fatalf("VerifyDeviceID failed: %v", err)
-	}
-	if match {
-		t.Error("VerifyDeviceID should return false for invalid ID")
-	}
-}
-
 func TestGetMetadata(t *testing.T) {
 	meta := GetMetadata()
 
 	if meta.Platform == "" {
 		t.Error("Platform should not be empty")
-	}
-	if meta.IntentraVersion == "" {
-		t.Error("IntentraVersion should not be empty")
 	}
 }
 

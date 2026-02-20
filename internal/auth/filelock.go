@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -18,12 +17,12 @@ const (
 	lockPollInterval = 50 * time.Millisecond
 )
 
-func GetLockFile() string {
+func getLockFile() string {
 	return filepath.Join(config.GetConfigDir(), lockFileName)
 }
 
-func AcquireCredentialLock() (func(), error) {
-	lockFile := GetLockFile()
+func acquireCredentialLock() (func(), error) {
+	lockFile := getLockFile()
 
 	if err := config.EnsureDirectories(); err != nil {
 		return nil, fmt.Errorf("failed to create config directory: %w", err)
@@ -94,7 +93,7 @@ func isProcessRunning(pid int) bool {
 }
 
 func WithCredentialLock(fn func() error) error {
-	release, err := AcquireCredentialLock()
+	release, err := acquireCredentialLock()
 	if err != nil {
 		return err
 	}
@@ -103,25 +102,3 @@ func WithCredentialLock(fn func() error) error {
 	return fn()
 }
 
-func TryWithCredentialLock(fn func() error) error {
-	lockFile := GetLockFile()
-
-	if err := config.EnsureDirectories(); err != nil {
-		return fn()
-	}
-
-	tryCleanStaleLock(lockFile)
-
-	file, err := os.OpenFile(lockFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return fn()
-	}
-
-	pid := os.Getpid()
-	_, _ = file.WriteString(strconv.Itoa(pid) + "\n" + strconv.FormatInt(time.Now().UnixMilli(), 10))
-	file.Close()
-
-	defer os.Remove(lockFile)
-
-	return fn()
-}

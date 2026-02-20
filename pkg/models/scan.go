@@ -12,7 +12,6 @@ const (
 	ScanStatusPending   ScanStatus = "pending"
 	ScanStatusAnalyzing ScanStatus = "analyzing"
 	ScanStatusReviewed  ScanStatus = "reviewed"
-	ScanStatusRejected  ScanStatus = "rejected"
 )
 
 // ScanSource identifies the origin of a scan event.
@@ -21,13 +20,6 @@ type ScanSource struct {
 	Event     string `json:"event,omitempty"`
 	ToolName  string `json:"tool_name,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
-}
-
-// ScanContent contains the actual prompt/response/tool data.
-type ScanContent struct {
-	Prompt    string          `json:"prompt,omitempty"`
-	Response  string          `json:"response,omitempty"`
-	ToolInput json.RawMessage `json:"tool_input,omitempty"`
 }
 
 // MCPToolCall represents aggregated usage of a single MCP server tool within a scan.
@@ -43,19 +35,17 @@ type MCPToolCall struct {
 
 // Scan represents an aggregated conversation.
 type Scan struct {
-	ID             string       `json:"scan_id"`
-	DeviceID       string       `json:"device_id"`
-	Tool           string       `json:"tool,omitempty"`
-	Timestamp      string       `json:"timestamp,omitempty"`
-	ConversationID string       `json:"conversation_id,omitempty"`
-	GenerationID   string       `json:"generation_id,omitempty"`
-	Model          string       `json:"model,omitempty"`
-	Status         ScanStatus   `json:"status,omitempty"`
-	StartTime      time.Time    `json:"start_time,omitempty"`
-	EndTime        time.Time    `json:"end_time,omitempty"`
-	Source         *ScanSource  `json:"source,omitempty"`
-	Content        *ScanContent `json:"content,omitempty"`
-	Events         []Event      `json:"events,omitempty"`
+	ID             string      `json:"scan_id"`
+	DeviceID       string      `json:"device_id"`
+	Tool           string      `json:"tool,omitempty"`
+	ConversationID string      `json:"conversation_id,omitempty"`
+	GenerationID   string      `json:"generation_id,omitempty"`
+	Model          string      `json:"model,omitempty"`
+	Status         ScanStatus  `json:"status,omitempty"`
+	StartTime      time.Time   `json:"start_time,omitempty"`
+	EndTime        time.Time   `json:"end_time,omitempty"`
+	Source         *ScanSource `json:"source,omitempty"`
+	Events         []Event     `json:"events,omitempty"`
 
 	TotalTokens    int     `json:"total_tokens"`
 	InputTokens    int     `json:"input_tokens"`
@@ -64,10 +54,6 @@ type Scan struct {
 	LLMCalls       int     `json:"llm_calls"`
 	ToolCalls      int     `json:"tool_calls"`
 	EstimatedCost  float64 `json:"estimated_cost"`
-
-	RefundLikelihood int     `json:"refund_likelihood,omitempty"`
-	RefundAmount     float64 `json:"refund_amount,omitempty"`
-	Summary          string  `json:"summary,omitempty"`
 
 	RawEvents []map[string]any `json:"raw_events,omitempty"`
 
@@ -80,41 +66,131 @@ type Scan struct {
 	SessionEndReason  string `json:"session_end_reason,omitempty"`
 	SessionDurationMs int64  `json:"session_duration_ms,omitempty"`
 
-	RepoName      string                   `json:"repo_name,omitempty"`
-	RepoURLHash   string                   `json:"repo_url_hash,omitempty"`
-	BranchName    string                   `json:"branch_name,omitempty"`
-	FilesModified []map[string]interface{} `json:"files_modified,omitempty"`
-	AcceptedLines int                      `json:"accepted_lines,omitempty"`
+	RepoName      string           `json:"repo_name,omitempty"`
+	RepoURLHash   string           `json:"repo_url_hash,omitempty"`
+	BranchName    string           `json:"branch_name,omitempty"`
+	FilesModified []map[string]any `json:"files_modified,omitempty"`
 }
 
-// Duration returns the scan duration.
-func (s *Scan) Duration() time.Duration {
-	return s.EndTime.Sub(s.StartTime)
+// BuildAPIPayload constructs the JSON-serializable map for sending a scan to the API.
+// The deviceID parameter is the caller's device identifier.
+func (s *Scan) BuildAPIPayload(deviceID string) map[string]any {
+	durationMs := int64(0)
+	if !s.EndTime.IsZero() && !s.StartTime.IsZero() {
+		durationMs = s.EndTime.Sub(s.StartTime).Milliseconds()
+	}
+
+	sessionID := ""
+	if s.Source != nil {
+		sessionID = s.Source.SessionID
+	}
+
+	events := buildEventPayload(s.RawEvents, s.Events)
+
+	body := map[string]any{
+		"tool":            s.Tool,
+		"started_at":      s.StartTime.Format(time.RFC3339Nano),
+		"ended_at":        s.EndTime.Format(time.RFC3339Nano),
+		"duration_ms":     durationMs,
+		"llm_call_count":  s.LLMCalls,
+		"total_tokens":    s.TotalTokens,
+		"estimated_cost":  s.EstimatedCost,
+		"events":          events,
+		"device_id":       deviceID,
+		"conversation_id": s.ConversationID,
+		"session_id":      sessionID,
+		"generation_id":   s.GenerationID,
+		"model":           s.Model,
+	}
+
+	if len(s.MCPToolUsage) > 0 {
+		body["mcp_tool_usage"] = s.MCPToolUsage
+	}
+	if s.SessionEndReason != "" {
+		body["session_end_reason"] = s.SessionEndReason
+	}
+	if s.SessionDurationMs > 0 {
+		body["session_duration_ms"] = s.SessionDurationMs
+	}
+	if s.RepoName != "" {
+		body["repo_name"] = s.RepoName
+	}
+	if s.RepoURLHash != "" {
+		body["repo_url_hash"] = s.RepoURLHash
+	}
+	if s.BranchName != "" {
+		body["branch_name"] = s.BranchName
+	}
+	if len(s.FilesModified) > 0 {
+		body["files_modified"] = s.FilesModified
+	}
+
+	return body
 }
 
-// AddEvent adds an event and updates metrics.
-// Uses NormalizedType for event classification.
-func (s *Scan) AddEvent(e Event) {
-	e.ScanID = s.ID
-	s.Events = append(s.Events, e)
-	s.InputTokens += e.InputTokens
-	s.OutputTokens += e.OutputTokens
-	s.ThinkingTokens += e.ThinkingTokens
-	s.TotalTokens = s.InputTokens + s.OutputTokens + s.ThinkingTokens
-
-	llmEvents := map[string]bool{
-		"after_response": true, "after_tool": true, "after_file_edit": true,
-		"after_file_read": true, "after_shell": true, "after_mcp": true, "after_model": true,
-	}
-	toolEvents := map[string]bool{
-		"after_tool": true, "after_file_edit": true, "after_file_read": true,
-		"after_shell": true, "after_mcp": true,
+// buildEventPayload converts raw events or structured events into API-ready maps.
+func buildEventPayload(rawEvents []map[string]any, events []Event) []map[string]any {
+	if len(rawEvents) > 0 {
+		return rawEvents
 	}
 
-	if llmEvents[e.NormalizedType] {
-		s.LLMCalls++
+	var result []map[string]any
+	for _, ev := range events {
+		evMap := map[string]any{
+			"hook_type":       string(ev.HookType),
+			"normalized_type": ev.NormalizedType,
+			"timestamp":       ev.Timestamp.Format(time.RFC3339Nano),
+			"tool_name":       ev.ToolName,
+			"command":         ev.Command,
+			"command_output":  ev.CommandOutput,
+			"file_path":       ev.FilePath,
+			"prompt":          ev.Prompt,
+			"response":        ev.Response,
+			"thought":         ev.Thought,
+			"duration_ms":     ev.DurationMs,
+			"conversation_id": ev.ConversationID,
+			"session_id":      ev.SessionID,
+			"tokens": map[string]int{
+				"input":    ev.InputTokens,
+				"output":   ev.OutputTokens,
+				"thinking": ev.ThinkingTokens,
+			},
+		}
+		if ev.CompactionTrigger != "" {
+			evMap["compaction_trigger"] = ev.CompactionTrigger
+		}
+		if ev.ContextUsagePercent > 0 {
+			evMap["context_usage_percent"] = ev.ContextUsagePercent
+		}
+		if ev.ContextTokens > 0 {
+			evMap["context_tokens"] = ev.ContextTokens
+		}
+		if ev.ContextWindowSize > 0 {
+			evMap["context_window_size"] = ev.ContextWindowSize
+		}
+		if ev.MessageCount > 0 {
+			evMap["message_count"] = ev.MessageCount
+		}
+		if ev.MessagesToCompact > 0 {
+			evMap["messages_to_compact"] = ev.MessagesToCompact
+		}
+		if ev.IsFirstCompaction != nil {
+			evMap["is_first_compaction"] = *ev.IsFirstCompaction
+		}
+		if len(ev.ToolInput) > 0 {
+			var toolInput map[string]any
+			if err := json.Unmarshal(ev.ToolInput, &toolInput); err == nil {
+				evMap["tool_input"] = toolInput
+			}
+		}
+		if len(ev.ToolOutput) > 0 {
+			var toolOutput any
+			if err := json.Unmarshal(ev.ToolOutput, &toolOutput); err == nil {
+				evMap["tool_output"] = toolOutput
+			}
+		}
+		result = append(result, evMap)
 	}
-	if toolEvents[e.NormalizedType] {
-		s.ToolCalls++
-	}
+	return result
 }
+
