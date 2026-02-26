@@ -219,6 +219,7 @@ func RefreshCredentials(creds *Credentials) (*Credentials, error) {
 	})
 
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: credential lock failed, falling back to cleartext storage: %v\n", err)
 		if err := SaveCredentials(newCreds); err != nil {
 			return nil, fmt.Errorf("failed to save refreshed credentials: %w", err)
 		}

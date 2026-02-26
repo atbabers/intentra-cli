@@ -24,19 +24,25 @@ const (
 
 var (
 	cachedDeviceID string
-	deviceIDOnce   sync.Once
+	deviceIDMu     sync.Mutex
 )
 
 // GetDeviceID returns an HMAC-immutable device identifier.
 // The ID is deterministic based on hardware identifiers but cannot be reversed.
+// On failure, subsequent calls will retry instead of caching the error permanently.
 func GetDeviceID() (string, error) {
-	var err error
-	deviceIDOnce.Do(func() {
-		cachedDeviceID, err = generateDeviceID()
-	})
+	deviceIDMu.Lock()
+	defer deviceIDMu.Unlock()
+
+	if cachedDeviceID != "" {
+		return cachedDeviceID, nil
+	}
+
+	id, err := generateDeviceID()
 	if err != nil {
 		return "", err
 	}
+	cachedDeviceID = id
 	return cachedDeviceID, nil
 }
 
@@ -210,8 +216,8 @@ func getOSVersion() string {
 		data, err := os.ReadFile("/etc/os-release")
 		if err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
-				if strings.HasPrefix(line, "VERSION_ID=") {
-					return strings.Trim(strings.TrimPrefix(line, "VERSION_ID="), "\"")
+				if after, found := strings.CutPrefix(line, "VERSION_ID="); found {
+					return strings.Trim(after, "\"")
 				}
 			}
 		}

@@ -166,16 +166,10 @@ func loadFromCleartextAndMigrate() (*Credentials, error) {
 		return nil, err
 	}
 
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				fmt.Fprintf(os.Stderr, "Warning: migration to secure storage panicked: %v\n", r)
-			}
-		}()
-		if err := MigrateToSecureStorage(creds); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: migration to secure storage failed: %v\n", err)
-		}
-	}()
+	// Migrate synchronously to avoid goroutine leak in a short-lived CLI process.
+	if err := MigrateToSecureStorage(creds); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: migration to secure storage failed: %v\n", err)
+	}
 
 	return creds, nil
 }

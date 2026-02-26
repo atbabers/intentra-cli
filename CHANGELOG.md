@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-02-25
+
+### Added
+- Expanded model pricing: Claude 4.5 series (Opus, Sonnet, Haiku), Claude Opus 4, Gemini 3/2.5/2.0/1.5 series, GPT-5.2/o3-pro/o3/o1 models
+- Tool-specific pricing multipliers (Windsurf 1.2x; Cursor, Copilot, Claude, Gemini at 1.0x)
+- Path sanitization: absolute home directory paths replaced with `~` in scan payloads and aggregated file statistics
+- Event loading cap (10,000 events max) to prevent memory exhaustion on large event files
+- Malformed event line counting with stderr warning
+- `conversationId` extraction in Cursor and Claude normalizers
+- Tool extraction from events for cost estimation
+
+### Changed
+- Default model updated from `claude-3-5-sonnet` to `claude-sonnet-4.5`
+- Default fallback cost updated from $0.003 to $0.005 per 1K tokens
+- Scan IDs now use 12-byte hashes (24 hex chars) instead of 8-byte (16 hex chars) for lower collision probability
+- `EstimateCost` uses sorted prefix matching (longest prefix first) for correct model identification
+- Credential migration from cleartext to secure storage now runs synchronously to prevent goroutine leak in short-lived CLI process
+- Unicode-safe `capitalizeFirst` using `unicode.ToUpper`
+- Debug HTTP logs now include RFC3339 timestamps
+- Removed unused `body` parameter from `addAuth`
+
+### Fixed
+- Hook template generators (`GenerateCursorHooksJSON`, `GenerateCopilotHooksJSON`, `GenerateWindsurfHooksJSON`) now return proper errors instead of swallowing `json.MarshalIndent` failures
+- Lock file write errors now propagated instead of silently ignored
+- `isProcessRunning` correctly handles `ErrPermission` (process exists but owned by another user)
+- `GetConfigDir` now exits with error message when home directory cannot be determined (was silently using empty path)
+- Warning logged when credential lock acquisition fails during token refresh
+
+### Security
+- Config file permission check warns if group/other-readable (`0077` mask)
+- Atomic config file writes via temp file + rename with `0600` permissions
+- Auto-expiry of stale lock files older than 60 seconds
+- Auth HTTP client uses explicit 30-second timeout instead of unbounded default
+- Lock file release failures logged to stderr
+
 ## [0.10.0] - 2026-02-19
 
 ### Added
@@ -332,6 +367,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.11.0]: https://github.com/atbabers/intentra-cli/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/atbabers/intentra-cli/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/atbabers/intentra-cli/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/atbabers/intentra-cli/compare/v0.8.2...v0.9.0

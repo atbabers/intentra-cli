@@ -46,7 +46,10 @@ const (
 
 // Normalizer defines the interface for tool-specific event normalizers.
 type Normalizer interface {
+	// NormalizeEventType converts a tool-native event name (nativeType) to a
+	// unified NormalizedEventType. Returns EventUnknown for unrecognized names.
 	NormalizeEventType(nativeType string) NormalizedEventType
+	// Tool returns the tool identifier string (e.g. "cursor", "claude").
 	Tool() string
 }
 
@@ -79,6 +82,11 @@ func (n *GenericNormalizer) NormalizeEventType(native string) NormalizedEventTyp
 
 // IsStopEvent returns true if the event type marks the end of a scan.
 // Each tool has exactly ONE designated terminal event to prevent duplicate scans.
+//
+// NOTE: Windsurf does not provide a dedicated "stop" hook. We use
+// EventAfterResponse as the best available proxy, but this means scans may
+// be incomplete if the session continues after the last observed response.
+// Windsurf sessions that end without a final response will not generate a scan.
 func IsStopEvent(eventType NormalizedEventType, tool string) bool {
 	switch tool {
 	case "windsurf":

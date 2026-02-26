@@ -17,7 +17,7 @@ var claudeEventMapping = map[string]NormalizedEventType{
 	"UserPromptSubmit":   EventBeforePrompt,
 	"PreToolUse":         EventBeforeTool,
 	"PostToolUse":        EventAfterTool,
-	"PostToolUseFailure": EventAfterTool,
+	"PostToolUseFailure": EventToolUseFailure,
 	"PermissionRequest":  EventPermissionRequest,
 	"Notification":       EventNotification,
 	"Stop":               EventStop,
@@ -28,6 +28,12 @@ var claudeEventMapping = map[string]NormalizedEventType{
 }
 
 // NormalizeEventType converts Claude Code PascalCase events to snake_case normalized types.
+// Claude Code event taxonomy mapping:
+//   - Session lifecycle: SessionStart, SessionEnd, Setup (maps to session_start)
+//   - Prompt/response: UserPromptSubmit, SubagentStart (both map to before_prompt)
+//   - Tool: PreToolUse, PostToolUse, PostToolUseFailure
+//   - Permission/notification: PermissionRequest, Notification
+//   - Agent: SubagentStop, PreCompact, Stop
 func (n *ClaudeNormalizer) NormalizeEventType(native string) NormalizedEventType {
 	if normalized, ok := claudeEventMapping[native]; ok {
 		return normalized

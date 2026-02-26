@@ -1,12 +1,15 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 )
 
 // GetConfigDir returns the OS-appropriate config directory.
+// Panics if the home directory cannot be determined and no override is set,
+// since all downstream callers depend on a valid path.
 func GetConfigDir() string {
 	// Allow override for testing
 	if dir := os.Getenv("INTENTRA_CONFIG_DIR"); dir != "" {
@@ -17,7 +20,12 @@ func GetConfigDir() string {
 	case "windows":
 		return filepath.Join(os.Getenv("APPDATA"), "intentra")
 	default:
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: cannot determine home directory: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Set INTENTRA_CONFIG_DIR to override.\n")
+			os.Exit(1)
+		}
 		return filepath.Join(home, ".intentra")
 	}
 }

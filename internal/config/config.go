@@ -170,6 +170,15 @@ func Load() (*Config, error) {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return nil, fmt.Errorf("error reading config: %w", err)
 		}
+	} else {
+		// Warn if the config file is world-readable (group or other permissions set)
+		if cfgPath := v.ConfigFileUsed(); cfgPath != "" {
+			if info, statErr := os.Stat(cfgPath); statErr == nil {
+				if info.Mode().Perm()&0o077 != 0 {
+					fmt.Fprintf(os.Stderr, "Warning: config file %s has overly permissive permissions %o; consider chmod 600\n", cfgPath, info.Mode().Perm())
+				}
+			}
+		}
 	}
 
 	// Unmarshal
@@ -425,6 +434,20 @@ func SaveConfig(cfg *Config) error {
 	v.Set("logging.level", cfg.Log.Level)
 	v.Set("logging.format", cfg.Log.Format)
 
-	return v.WriteConfigAs(configPath)
+	// Write to temp file first, then atomically rename
+	tmpPath := configPath + ".tmp"
+	if err := v.WriteConfigAs(tmpPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to write config: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to set config file permissions: %w", err)
+	}
+	if err := os.Rename(tmpPath, configPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to install config: %w", err)
+	}
+	return nil
 }
 

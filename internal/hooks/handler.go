@@ -37,7 +37,7 @@ const (
 
 var hookHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
-var lastCleanup time.Time
+const cleanupMarkerFile = "intentra_cleanup_marker"
 
 type bufferedEvent struct {
 	Event    *models.Event  `json:"event"`
@@ -99,15 +99,22 @@ func appendToBuffer(sessionKey string, event *models.Event, rawEvent map[string]
 func readAndClearBuffer(sessionKey string) ([]bufferedEvent, error) {
 	bufferPath := getBufferPath(sessionKey)
 
-	data, err := os.ReadFile(bufferPath)
-	if err != nil {
+	// Atomically move the buffer file to a temp name before reading.
+	// This prevents concurrent writers from losing events between read and delete.
+	tmpPath := bufferPath + ".reading"
+	if err := os.Rename(bufferPath, tmpPath); err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
+		return nil, fmt.Errorf("failed to move buffer for reading: %w", err)
+	}
+
+	data, err := os.ReadFile(tmpPath)
+	if err != nil {
 		return nil, fmt.Errorf("failed to read buffer: %w", err)
 	}
 
-	os.Remove(bufferPath)
+	os.Remove(tmpPath)
 
 	var events []bufferedEvent
 	sc := bufio.NewScanner(bytes.NewReader(data))
@@ -128,10 +135,17 @@ func readAndClearBuffer(sessionKey string) ([]bufferedEvent, error) {
 }
 
 func cleanupStaleBuffers() {
-	if time.Since(lastCleanup) <= maxBufferAge {
-		return
+	markerPath := filepath.Join(os.TempDir(), cleanupMarkerFile)
+	if info, err := os.Stat(markerPath); err == nil {
+		if time.Since(info.ModTime()) <= time.Hour {
+			return
+		}
 	}
-	lastCleanup = time.Now()
+
+	// Touch/create the cleanup marker file
+	if f, err := os.Create(markerPath); err == nil {
+		f.Close()
+	}
 
 	patterns := []string{
 		filepath.Join(os.TempDir(), "intentra_buffer_*.jsonl"),
@@ -270,7 +284,7 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 		if tool == "copilot" {
 			model = "gpt-4o"
 		} else {
-			model = "claude-3-5-sonnet"
+			model = "claude-sonnet-4.5"
 		}
 	}
 	scan.EstimatedCost = scanner.EstimateCost(scan.TotalTokens, model)
@@ -364,6 +378,11 @@ func aggregateMCPToolUsage(events []bufferedEvent, totalScanCost float64) []mode
 	for _, call := range usage {
 		if totalScanDuration > 0 && totalScanCost > 0 {
 			proportion := float64(call.TotalDuration) / float64(totalScanDuration)
+			// Cap MCP cost attribution at 20% of total scan cost
+			// MCP calls are typically cheap API calls; LLM tokens drive real cost
+			if proportion > 0.2 {
+				proportion = 0.2
+			}
 			call.EstimatedCost = totalScanCost * proportion
 		}
 		result = append(result, *call)
@@ -543,7 +562,50 @@ func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, 
 	extractMCPMetadata(event, raw, tool, normalizedType)
 	extractCompactionMetadata(event, raw, normalizedType)
 
+	sanitizeEvent(event)
+
 	return event, raw, normalizedType, nil
+}
+
+// redactContent replaces a content string with a length-preserving placeholder.
+// This prevents PII/PHI from being stored in local buffers or transmitted to the API.
+func redactContent(value string) string {
+	if value == "" {
+		return value
+	}
+	return fmt.Sprintf("[redacted: %d chars]", len(value))
+}
+
+// sanitizePath replaces the home directory prefix with ~ to avoid storing absolute paths.
+func sanitizePath(path string) string {
+	if path == "" {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if strings.HasPrefix(path, home) {
+		return "~" + path[len(home):]
+	}
+	return path
+}
+
+// sanitizeEvent redacts sensitive content fields on an event in place.
+// Token counts and metadata are preserved; only content strings are replaced.
+func sanitizeEvent(event *models.Event) {
+	event.Prompt = redactContent(event.Prompt)
+	event.Response = redactContent(event.Response)
+	event.Thought = redactContent(event.Thought)
+	event.Command = redactContent(event.Command)
+	event.CommandOutput = redactContent(event.CommandOutput)
+	if len(event.ToolInput) > 0 {
+		event.ToolInput = json.RawMessage(fmt.Sprintf("[redacted: %d chars]", len(event.ToolInput)))
+	}
+	if len(event.ToolOutput) > 0 {
+		event.ToolOutput = json.RawMessage(fmt.Sprintf("[redacted: %d chars]", len(event.ToolOutput)))
+	}
+	event.FilePath = sanitizePath(event.FilePath)
 }
 
 // extractCompactionMetadata populates compaction-specific fields for pre_compact events.
@@ -849,9 +911,16 @@ func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType
 		cursorKey := "cursor_" + baseKey
 		cursorBufferPath := getBufferPath(cursorKey)
 		if _, err := os.Stat(cursorBufferPath); err == nil {
-			debug.Log("Claude event has matching Cursor session, treating as Cursor")
-			sessionKey = cursorKey
-			tool = "cursor"
+			// Check buffer age to avoid merging stale sessions
+			if info, statErr := os.Stat(cursorBufferPath); statErr == nil {
+				if time.Since(info.ModTime()) < 30*time.Minute {
+					debug.Log("Claude event has matching active Cursor session, treating as Cursor")
+					sessionKey = cursorKey
+					tool = "cursor"
+				} else {
+					debug.Log("Claude event has matching but stale Cursor session, keeping separate")
+				}
+			}
 		}
 	}
 

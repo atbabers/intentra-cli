@@ -5,6 +5,7 @@ package debug
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 // Enabled controls whether debug logging is active.
@@ -20,10 +21,11 @@ func Log(format string, args ...any) {
 // LogHTTP logs an HTTP request with method, URL, and status code.
 func LogHTTP(method, url string, statusCode int) {
 	if Enabled {
+		ts := time.Now().UTC().Format(time.RFC3339)
 		if statusCode == 0 {
-			fmt.Fprintf(os.Stderr, "[DEBUG] %s %s -> (failed)\n", method, url)
+			fmt.Fprintf(os.Stderr, "[DEBUG] %s %s %s -> (failed)\n", ts, method, url)
 		} else {
-			fmt.Fprintf(os.Stderr, "[DEBUG] %s %s -> %d\n", method, url, statusCode)
+			fmt.Fprintf(os.Stderr, "[DEBUG] %s %s %s -> %d\n", ts, method, url, statusCode)
 		}
 	}
 }

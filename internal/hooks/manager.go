@@ -59,7 +59,11 @@ func GetHooksDir(tool Tool) (string, error) {
 func getCursorHooksDir(home string) (string, error) {
 	switch runtime.GOOS {
 	case "windows":
-		return filepath.Join(os.Getenv("APPDATA"), "Cursor"), nil
+		appData := os.Getenv("APPDATA")
+		if appData == "" {
+			return "", fmt.Errorf("APPDATA environment variable not set")
+		}
+		return filepath.Join(appData, "Cursor"), nil
 	default:
 		return filepath.Join(home, ".cursor"), nil
 	}

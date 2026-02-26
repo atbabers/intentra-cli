@@ -3,6 +3,7 @@ package hooks
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"runtime"
 	"strings"
@@ -127,7 +128,7 @@ func GenerateCursorHooksJSON(handlerPath string) (string, error) {
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return "{}", nil
+		return "", fmt.Errorf("failed to marshal Cursor hooks JSON: %w", err)
 	}
 	return string(data), nil
 }
@@ -250,7 +251,7 @@ func GenerateCopilotHooksJSON(handlerPath string) (string, error) {
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return "{}", nil
+		return "", fmt.Errorf("failed to marshal Copilot hooks JSON: %w", err)
 	}
 	return string(data), nil
 }
@@ -287,7 +288,7 @@ func GenerateWindsurfHooksJSON(handlerPath string) (string, error) {
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return "{}", nil
+		return "", fmt.Errorf("failed to marshal Windsurf hooks JSON: %w", err)
 	}
 	return string(data), nil
 }

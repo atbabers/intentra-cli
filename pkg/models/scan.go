@@ -2,6 +2,8 @@ package models
 
 import (
 	"encoding/json"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -72,6 +74,21 @@ type Scan struct {
 	FilesModified []map[string]any `json:"files_modified,omitempty"`
 }
 
+// sanitizePath replaces the home directory prefix with ~ to avoid storing absolute paths.
+func sanitizePath(path string) string {
+	if path == "" {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if strings.HasPrefix(path, home) {
+		return "~" + path[len(home):]
+	}
+	return path
+}
+
 // BuildAPIPayload constructs the JSON-serializable map for sending a scan to the API.
 // The deviceID parameter is the caller's device identifier.
 func (s *Scan) BuildAPIPayload(deviceID string) map[string]any {
@@ -122,7 +139,21 @@ func (s *Scan) BuildAPIPayload(deviceID string) map[string]any {
 		body["branch_name"] = s.BranchName
 	}
 	if len(s.FilesModified) > 0 {
-		body["files_modified"] = s.FilesModified
+		sanitized := make([]map[string]any, len(s.FilesModified))
+		for i, entry := range s.FilesModified {
+			sanitizedEntry := make(map[string]any, len(entry))
+			for k, v := range entry {
+				if k == "file_path" {
+					if fp, ok := v.(string); ok {
+						sanitizedEntry[k] = sanitizePath(fp)
+						continue
+					}
+				}
+				sanitizedEntry[k] = v
+			}
+			sanitized[i] = sanitizedEntry
+		}
+		body["files_modified"] = sanitized
 	}
 
 	return body

@@ -35,6 +35,14 @@ var cursorEventMapping = map[string]NormalizedEventType{
 }
 
 // NormalizeEventType converts Cursor camelCase events to snake_case normalized types.
+// Cursor event taxonomy mapping:
+//   - Session lifecycle: sessionStart, sessionEnd
+//   - Prompt/response: beforeSubmitPrompt, afterAgentResponse, afterAgentThought
+//   - Shell: beforeShellExecution, afterShellExecution
+//   - MCP: beforeMCPExecution, afterMCPExecution
+//   - File: beforeTabFileRead, beforeReadFile, afterFileEdit, afterTabFileEdit
+//   - Tool: preToolUse, postToolUse, postToolUseFailure
+//   - Agent: subagentStart, subagentStop, preCompact, stop
 func (n *CursorNormalizer) NormalizeEventType(native string) NormalizedEventType {
 	if normalized, ok := cursorEventMapping[native]; ok {
 		return normalized

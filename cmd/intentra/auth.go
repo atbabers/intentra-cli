@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"runtime"
 	"time"
+	"unicode"
 
 	"github.com/atbabers/intentra-cli/internal/auth"
 	"github.com/atbabers/intentra-cli/internal/config"
@@ -315,16 +316,17 @@ func capitalizeFirst(s string) string {
 	if s == "" {
 		return s
 	}
-	if s[0] >= 'a' && s[0] <= 'z' {
-		return string(s[0]-32) + s[1:]
-	}
-	return s
+	runes := []rune(s)
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
 }
+
+var authHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 func requestDeviceCode(endpoint string) (*auth.DeviceCodeResponse, error) {
 	url := endpoint + "/oauth/device/code"
 
-	resp, err := http.Post(url, "application/json", nil)
+	resp, err := authHTTPClient.Post(url, "application/json", nil)
 	if err != nil {
 		debug.LogHTTP("POST", url, 0)
 		return nil, fmt.Errorf("request failed: %w", err)
@@ -370,7 +372,7 @@ func pollForToken(endpoint string, deviceResp *auth.DeviceCodeResponse) (*auth.T
 		default:
 		}
 
-		resp, err := http.Post(url, "application/json", bytes.NewReader(payloadBytes))
+		resp, err := authHTTPClient.Post(url, "application/json", bytes.NewReader(payloadBytes))
 		if err != nil {
 			debug.LogHTTP("POST", url, 0)
 			time.Sleep(interval)

@@ -89,7 +89,7 @@ func (c *Client) SendScan(scan *models.Scan) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", UserAgent)
 
-	if err := c.addAuth(req, jsonBody); err != nil {
+	if err := c.addAuth(req); err != nil {
 		return fmt.Errorf("failed to add auth: %w", err)
 	}
 
@@ -121,7 +121,7 @@ func (c *Client) SendScans(scans []*models.Scan) error {
 
 // addAuth adds authentication headers based on config.
 // Priority: JWT credentials (from 'intentra login') > config auth mode (api_key)
-func (c *Client) addAuth(req *http.Request, body []byte) error {
+func (c *Client) addAuth(req *http.Request) error {
 	creds := auth.GetValidCredentials()
 	if creds != nil {
 		return c.addJWTAuth(req)
@@ -137,7 +137,10 @@ func (c *Client) addAuth(req *http.Request, body []byte) error {
 
 // addAPIKeyAuth adds API key authentication headers for Enterprise organizations.
 // Server expects: X-API-Key-ID, X-API-Key-Secret, X-API-Timestamp, X-API-Nonce
-// The secret is sent directly and verified using bcrypt on the server.
+// The secret is verified server-side using bcrypt against the stored hash.
+// HTTPS is enforced to protect the secret in transit.
+// TODO: Migrate to HMAC-SHA256 signing once the server stores an hmac_key
+// alongside the bcrypt hash, eliminating raw secret transmission.
 func (c *Client) addAPIKeyAuth(req *http.Request) error {
 	if !strings.HasPrefix(req.URL.String(), "https://") {
 		return fmt.Errorf("API key auth requires HTTPS; refusing to send credentials over HTTP")
