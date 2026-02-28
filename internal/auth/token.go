@@ -15,9 +15,11 @@ import (
 	"github.com/atbabers/intentra-cli/internal/config"
 )
 
-const maxResponseSize = 10 * 1024 * 1024 // 10 MB
+// MaxResponseSize is the maximum allowed HTTP response body size (10 MB).
+const MaxResponseSize = 10 * 1024 * 1024
 
-var refreshClient = &http.Client{Timeout: 15 * time.Second}
+// HTTPClient is the shared HTTP client for auth operations (30s timeout).
+var HTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // Credentials represents stored authentication credentials.
 type Credentials struct {
@@ -62,56 +64,6 @@ func (c *Credentials) IsValid() bool {
 	return c.AccessToken != "" && !c.IsExpired()
 }
 
-// LoadCredentials loads credentials from the credentials file.
-func LoadCredentials() (*Credentials, error) {
-	credFile := config.GetCredentialsFile()
-
-	data, err := os.ReadFile(credFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to read credentials: %w", err)
-	}
-
-	var creds Credentials
-	if err := json.Unmarshal(data, &creds); err != nil {
-		return nil, fmt.Errorf("failed to parse credentials: %w", err)
-	}
-
-	return &creds, nil
-}
-
-// SaveCredentials saves credentials to the credentials file with secure permissions.
-func SaveCredentials(creds *Credentials) error {
-	if err := config.EnsureDirectories(); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
-	}
-
-	data, err := json.MarshalIndent(creds, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal credentials: %w", err)
-	}
-
-	credFile := config.GetCredentialsFile()
-	if err := os.WriteFile(credFile, data, 0600); err != nil {
-		return fmt.Errorf("failed to write credentials: %w", err)
-	}
-
-	return nil
-}
-
-// DeleteCredentials removes the credentials file.
-func DeleteCredentials() error {
-	credFile := config.GetCredentialsFile()
-
-	err := os.Remove(credFile)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to delete credentials: %w", err)
-	}
-
-	return nil
-}
 
 // CredentialsFromTokenResponse creates Credentials from a TokenResponse.
 func CredentialsFromTokenResponse(resp *TokenResponse) *Credentials {
@@ -127,26 +79,30 @@ func CredentialsFromTokenResponse(resp *TokenResponse) *Credentials {
 }
 
 // GetValidCredentials loads credentials from secure storage, refreshes if needed, and returns them if valid.
-func GetValidCredentials() *Credentials {
+// Returns (nil, nil) when the user is simply not logged in, and (nil, err) on system failures.
+func GetValidCredentials() (*Credentials, error) {
 	creds, err := LoadCredentialsFromKeyring()
-	if err != nil || creds == nil {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("failed to load credentials: %w", err)
+	}
+	if creds == nil {
+		return nil, nil
 	}
 
 	if creds.IsValid() {
-		return creds
+		return creds, nil
 	}
 
 	if creds.RefreshToken == "" {
-		return nil
+		return nil, nil
 	}
 
 	refreshed, err := RefreshCredentials(creds)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("failed to refresh credentials: %w", err)
 	}
 
-	return refreshed
+	return refreshed, nil
 }
 
 // RefreshCredentials uses the refresh token to obtain new credentials.
@@ -155,11 +111,46 @@ func RefreshCredentials(creds *Credentials) (*Credentials, error) {
 		return nil, fmt.Errorf("no refresh token available")
 	}
 
+	if creds.RefreshToken == "env-token-no-refresh" {
+		return creds, nil
+	}
+
+	// Quick unlocked check — if someone already refreshed, use that
 	currentCreds, _ := LoadCredentialsFromKeyring()
 	if currentCreds != nil && currentCreds.IsValid() && currentCreds.AccessToken != creds.AccessToken {
 		return currentCreds, nil
 	}
 
+	// Perform refresh (outside lock — HTTP call can be slow)
+	newCreds, err := doRefreshHTTP(creds)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store under lock with re-check
+	err = WithCredentialLock(func() error {
+		latestCreds, _ := LoadCredentialsFromKeyring()
+		if latestCreds != nil && latestCreds.IsValid() && latestCreds.AccessToken != creds.AccessToken {
+			// Another process already refreshed — use their token
+			newCreds = latestCreds
+			return nil
+		}
+
+		return storeCredentialsInKeyringUnlocked(newCreds)
+	})
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: credential lock failed, falling back to encrypted cache: %v\n", err)
+		if writeErr := WriteEncryptedCache(newCreds); writeErr != nil {
+			return nil, fmt.Errorf("failed to save refreshed credentials: %w", writeErr)
+		}
+	}
+
+	return newCreds, nil
+}
+
+// doRefreshHTTP performs the HTTP refresh token exchange.
+func doRefreshHTTP(creds *Credentials) (*Credentials, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
@@ -176,13 +167,13 @@ func RefreshCredentials(creds *Credentials) (*Credentials, error) {
 	}
 	payloadBytes, _ := json.Marshal(payload)
 
-	resp, err := refreshClient.Post(url, "application/json", bytes.NewReader(payloadBytes))
+	resp, err := HTTPClient.Post(url, "application/json", bytes.NewReader(payloadBytes))
 	if err != nil {
 		return nil, fmt.Errorf("refresh request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -206,23 +197,6 @@ func RefreshCredentials(creds *Credentials) (*Credentials, error) {
 
 	if newCreds.RefreshToken == "" {
 		newCreds.RefreshToken = creds.RefreshToken
-	}
-
-	err = WithCredentialLock(func() error {
-		latestCreds, _ := LoadCredentialsFromKeyring()
-		if latestCreds != nil && latestCreds.IsValid() && latestCreds.AccessToken != creds.AccessToken {
-			newCreds = latestCreds
-			return nil
-		}
-
-		return storeCredentialsInKeyringUnlocked(newCreds)
-	})
-
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: credential lock failed, falling back to cleartext storage: %v\n", err)
-		if err := SaveCredentials(newCreds); err != nil {
-			return nil, fmt.Errorf("failed to save refreshed credentials: %w", err)
-		}
 	}
 
 	return newCreds, nil

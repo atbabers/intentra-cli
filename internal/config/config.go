@@ -49,10 +49,12 @@ type AuthConfig struct {
 }
 
 // APIKeyConfig contains API key authentication settings for Enterprise organizations.
-// The secret is sent directly to the server and verified using bcrypt.
+// When hmac_key is set, requests are signed with HMAC-SHA256 and the raw secret
+// is never transmitted. When only secret is set, legacy bcrypt mode is used.
 type APIKeyConfig struct {
-	KeyID  string `mapstructure:"key_id"` // API key identifier from Settings > API Keys
-	Secret string `mapstructure:"secret"` // API key secret (shown once at creation)
+	KeyID   string `mapstructure:"key_id"`   // API key identifier from Settings > API Keys
+	Secret  string `mapstructure:"secret"`   // API key secret (legacy bcrypt mode)
+	HMACKey string `mapstructure:"hmac_key"` // HMAC signing key (preferred, shown once at creation)
 }
 
 // LocalConfig contains local-only settings.
@@ -91,7 +93,7 @@ type LogConfig struct {
 
 // DefaultConfig returns configuration with sensible defaults.
 func DefaultConfig() *Config {
-	dataDir := GetDataDir()
+	dataDir, _ := GetDataDir()
 	return &Config{
 		Debug: false,
 		Server: ServerConfig{
@@ -141,7 +143,9 @@ func Load() (*Config, error) {
 	// Config file locations
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
-	v.AddConfigPath(GetConfigDir())
+	if configDir, err := GetConfigDir(); err == nil {
+		v.AddConfigPath(configDir)
+	}
 	v.AddConfigPath("/etc/intentra")
 	v.AddConfigPath(".")
 
@@ -189,6 +193,7 @@ func Load() (*Config, error) {
 	// Expand environment variables in sensitive fields
 	cfg.Server.Auth.APIKey.KeyID = os.ExpandEnv(cfg.Server.Auth.APIKey.KeyID)
 	cfg.Server.Auth.APIKey.Secret = os.ExpandEnv(cfg.Server.Auth.APIKey.Secret)
+	cfg.Server.Auth.APIKey.HMACKey = os.ExpandEnv(cfg.Server.Auth.APIKey.HMACKey)
 	cfg.Local.AnthropicAPIKey = os.ExpandEnv(cfg.Local.AnthropicAPIKey)
 
 	// Environment variable overrides for API key auth
@@ -197,6 +202,9 @@ func Load() (*Config, error) {
 	}
 	if secret := os.Getenv("INTENTRA_API_SECRET"); secret != "" {
 		cfg.Server.Auth.APIKey.Secret = secret
+	}
+	if hmacKey := os.Getenv("INTENTRA_API_HMAC_KEY"); hmacKey != "" {
+		cfg.Server.Auth.APIKey.HMACKey = hmacKey
 	}
 
 	// ANTHROPIC_API_KEY env takes precedence for local analysis
@@ -242,6 +250,7 @@ func LoadWithFile(cfgFile string) (*Config, error) {
 	// Expand environment variables
 	cfg.Server.Auth.APIKey.KeyID = os.ExpandEnv(cfg.Server.Auth.APIKey.KeyID)
 	cfg.Server.Auth.APIKey.Secret = os.ExpandEnv(cfg.Server.Auth.APIKey.Secret)
+	cfg.Server.Auth.APIKey.HMACKey = os.ExpandEnv(cfg.Server.Auth.APIKey.HMACKey)
 	cfg.Local.AnthropicAPIKey = os.ExpandEnv(cfg.Local.AnthropicAPIKey)
 
 	// Environment variable overrides
@@ -250,6 +259,9 @@ func LoadWithFile(cfgFile string) (*Config, error) {
 	}
 	if secret := os.Getenv("INTENTRA_API_SECRET"); secret != "" {
 		cfg.Server.Auth.APIKey.Secret = secret
+	}
+	if hmacKey := os.Getenv("INTENTRA_API_HMAC_KEY"); hmacKey != "" {
+		cfg.Server.Auth.APIKey.HMACKey = hmacKey
 	}
 
 	return cfg, nil
@@ -267,8 +279,11 @@ func (c *Config) Validate() error {
 
 	switch c.Server.Auth.Mode {
 	case "api_key":
-		if c.Server.Auth.APIKey.KeyID == "" || c.Server.Auth.APIKey.Secret == "" {
-			return fmt.Errorf("api_key auth requires key_id and secret")
+		if c.Server.Auth.APIKey.KeyID == "" {
+			return fmt.Errorf("api_key auth requires key_id")
+		}
+		if c.Server.Auth.APIKey.HMACKey == "" && c.Server.Auth.APIKey.Secret == "" {
+			return fmt.Errorf("api_key auth requires hmac_key (preferred) or secret")
 		}
 		if !strings.HasPrefix(c.Server.Endpoint, "https://") {
 			return fmt.Errorf("api_key auth requires HTTPS endpoint")
@@ -302,8 +317,10 @@ func (c *Config) Print() {
 		}
 		if c.Server.Auth.Mode == "api_key" {
 			fmt.Printf("  Key ID: %s\n", c.Server.Auth.APIKey.KeyID)
-			if c.Server.Auth.APIKey.Secret != "" {
-				fmt.Printf("  Secret: [REDACTED]\n")
+			if c.Server.Auth.APIKey.HMACKey != "" {
+				fmt.Printf("  HMAC Key: [REDACTED] (HMAC signing enabled)\n")
+			} else if c.Server.Auth.APIKey.Secret != "" {
+				fmt.Printf("  Secret: [REDACTED] (legacy mode)\n")
 			}
 		}
 	}
@@ -352,8 +369,9 @@ server:
     # API key authentication (Enterprise only)
     # Generate keys in Settings > API Keys on the web dashboard
     # api_key:
-    #   key_id: "${INTENTRA_API_KEY_ID}"   # API key ID (apk_...)
-    #   secret: "${INTENTRA_API_SECRET}"   # API key secret (intentra_sk_...)
+    #   key_id: "${INTENTRA_API_KEY_ID}"       # API key ID (apk_...)
+    #   hmac_key: "${INTENTRA_API_HMAC_KEY}"   # HMAC signing key (preferred, never transmitted)
+    #   secret: "${INTENTRA_API_SECRET}"       # Legacy mode: raw secret (use hmac_key instead)
 
 # Local settings
 local:
@@ -387,23 +405,29 @@ logging:
 	fmt.Print(sample)
 }
 
-// GetConfigPath returns the path to the config file.
-func GetConfigPath() string {
-	return filepath.Join(GetConfigDir(), "config.yaml")
-}
-
 // ConfigExists returns true if the config file exists.
 func ConfigExists() bool {
-	_, err := os.Stat(GetConfigPath())
-	return err == nil
+	p, err := GetConfigPath()
+	if err != nil {
+		return false
+	}
+	_, statErr := os.Stat(p)
+	return statErr == nil
 }
 
 // SaveConfig writes the configuration to the config file.
 // It preserves existing values and only updates specified fields.
 func SaveConfig(cfg *Config) error {
-	configPath := GetConfigPath()
+	configPath, err := GetConfigPath()
+	if err != nil {
+		return fmt.Errorf("failed to determine config path: %w", err)
+	}
 
-	if err := os.MkdirAll(GetConfigDir(), 0700); err != nil {
+	configDir, err := GetConfigDir()
+	if err != nil {
+		return fmt.Errorf("failed to determine config directory: %w", err)
+	}
+	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 

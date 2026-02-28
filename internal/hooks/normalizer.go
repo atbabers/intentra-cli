@@ -69,6 +69,24 @@ func GetNormalizer(tool string) Normalizer {
 	return &GenericNormalizer{}
 }
 
+// tableNormalizer implements Normalizer using a simple mapping table.
+// Tool-specific normalizers register themselves with this in init().
+type tableNormalizer struct {
+	tool    string
+	mapping map[string]NormalizedEventType
+}
+
+// Tool returns the tool identifier.
+func (n *tableNormalizer) Tool() string { return n.tool }
+
+// NormalizeEventType converts a tool-native event name to a unified type.
+func (n *tableNormalizer) NormalizeEventType(native string) NormalizedEventType {
+	if normalized, ok := n.mapping[native]; ok {
+		return normalized
+	}
+	return EventUnknown
+}
+
 // GenericNormalizer handles unknown tools by returning EventUnknown.
 type GenericNormalizer struct{}
 

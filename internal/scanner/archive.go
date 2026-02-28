@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -57,7 +58,11 @@ func archiveScan(scan *models.Scan, cfg *config.Config) error {
 
 	archiveDir := cfg.Local.Archive.Path
 	if archiveDir == "" {
-		archiveDir = filepath.Join(config.GetDataDir(), "archive")
+		if dataDir, err := config.GetDataDir(); err == nil {
+			archiveDir = filepath.Join(dataDir, "archive")
+		} else {
+			return fmt.Errorf("failed to determine data directory: %w", err)
+		}
 	}
 	archiveDir = os.ExpandEnv(archiveDir)
 

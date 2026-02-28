@@ -38,7 +38,7 @@ func newExtensionInfoCmd() *cobra.Command {
 }
 
 func runExtensionInfo(jsonOutput bool) error {
-	creds := auth.GetValidCredentials()
+	creds, _ := auth.GetValidCredentials()
 	authenticated := creds != nil
 
 	hooksInstalled := hooks.AnyHooksInstalled()
@@ -46,7 +46,7 @@ func runExtensionInfo(jsonOutput bool) error {
 	info := extensionInfo{
 		Version:           version,
 		SupportsExtension: true,
-		CredentialsPath:   config.GetCredentialsFile(),
+		CredentialsPath:   func() string { p, _ := config.GetCredentialsFile(); return p }(),
 		HooksInstalled:    hooksInstalled,
 		Authenticated:     authenticated,
 	}

@@ -27,12 +27,20 @@ const (
 	keySize               = 32
 )
 
-func getEncryptedCacheFile() string {
-	return filepath.Join(config.GetConfigDir(), "credentials.enc")
+func getEncryptedCacheFile() (string, error) {
+	dir, err := config.GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "credentials.enc"), nil
 }
 
-func getCacheKeyFile() string {
-	return filepath.Join(config.GetConfigDir(), ".cache-key")
+func getCacheKeyFile() (string, error) {
+	dir, err := config.GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ".cache-key"), nil
 }
 
 func WriteEncryptedCache(creds *Credentials) error {
@@ -59,7 +67,10 @@ func WriteEncryptedCache(creds *Credentials) error {
 	data[0] = encryptedCacheVersion
 	copy(data[1:], ciphertext)
 
-	cacheFile := getEncryptedCacheFile()
+	cacheFile, err := getEncryptedCacheFile()
+	if err != nil {
+		return fmt.Errorf("failed to determine cache path: %w", err)
+	}
 	tempFile := cacheFile + ".tmp"
 	if err := os.WriteFile(tempFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to write encrypted cache: %w", err)
@@ -74,7 +85,10 @@ func WriteEncryptedCache(creds *Credentials) error {
 }
 
 func ReadEncryptedCache() (*Credentials, error) {
-	cacheFile := getEncryptedCacheFile()
+	cacheFile, err := getEncryptedCacheFile()
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine cache path: %w", err)
+	}
 	data, err := os.ReadFile(cacheFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -111,12 +125,18 @@ func ReadEncryptedCache() (*Credentials, error) {
 }
 
 func DeleteEncryptedCache() error {
-	cacheFile := getEncryptedCacheFile()
+	cacheFile, err := getEncryptedCacheFile()
+	if err != nil {
+		return fmt.Errorf("failed to determine cache path: %w", err)
+	}
 	if err := os.Remove(cacheFile); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 
-	keyFile := getCacheKeyFile()
+	keyFile, err := getCacheKeyFile()
+	if err != nil {
+		return fmt.Errorf("failed to determine key path: %w", err)
+	}
 	if err := os.Remove(keyFile); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -125,7 +145,20 @@ func DeleteEncryptedCache() error {
 }
 
 func readCacheKey() ([]byte, error) {
-	keyFile := getCacheKeyFile()
+	// Try keyring first (matches GetOrCreateCacheKey write path)
+	kr, err := openKeyring()
+	if err == nil {
+		item, err := kr.Get(cacheKeyKey)
+		if err == nil && len(item.Data) == keySize {
+			return item.Data, nil
+		}
+	}
+
+	// Fall back to file
+	keyFile, err := getCacheKeyFile()
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine key path: %w", err)
+	}
 	key, err := os.ReadFile(keyFile)
 	if err != nil {
 		if os.IsNotExist(err) {

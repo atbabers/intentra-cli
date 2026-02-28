@@ -24,7 +24,10 @@ func newHooksCmd() *cobra.Command {
 }
 
 func saveAPIConfig(server, keyID, secret string) error {
-	configDir := config.GetConfigDir()
+	configDir, err := config.GetConfigDir()
+	if err != nil {
+		return fmt.Errorf("failed to determine config directory: %w", err)
+	}
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		return err
 	}

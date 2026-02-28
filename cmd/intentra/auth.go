@@ -19,10 +19,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const maxResponseSize = 10 * 1024 * 1024 // 10 MB
 
 func newLoginCmd() *cobra.Command {
-	var noBrowser bool
+	var noBrowser, force bool
 
 	cmd := &cobra.Command{
 		Use:           "login",
@@ -36,11 +35,12 @@ This will:
 2. Open your browser to authorize (or display URL if --no-browser)
 3. Poll for authorization and save credentials`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runLogin(noBrowser)
+			return runLogin(noBrowser, force)
 		},
 	}
 
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Print URL instead of opening browser")
+	cmd.Flags().BoolVar(&force, "force", false, "Force re-authentication even if already logged in")
 
 	return cmd
 }
@@ -71,11 +71,12 @@ func newStatusCmd() *cobra.Command {
 	}
 }
 
-func runLogin(noBrowser bool) error {
-	creds := auth.GetValidCredentials()
-	if creds != nil {
-		fmt.Println("Already logged in. Run 'intentra logout' first.")
-		return fmt.Errorf("already logged in")
+func runLogin(noBrowser, force bool) error {
+	creds, _ := auth.GetValidCredentials()
+	if creds != nil && !force {
+		fmt.Println("Already logged in.")
+		fmt.Println("Use 'intentra login --force' to re-authenticate.")
+		return nil
 	}
 
 	cfg, err := loadConfig()
@@ -118,8 +119,8 @@ func runLogin(noBrowser bool) error {
 
 	creds = auth.CredentialsFromTokenResponse(tokenResp)
 	if err := auth.StoreCredentialsInKeyring(creds); err != nil {
-		fmt.Printf("Warning: secure storage unavailable, using fallback: %v\n", err)
-		if err := auth.SaveCredentials(creds); err != nil {
+		fmt.Printf("Warning: secure storage unavailable, using encrypted cache: %v\n", err)
+		if err := auth.WriteEncryptedCache(creds); err != nil {
 			return fmt.Errorf("failed to save credentials: %w", err)
 		}
 	}
@@ -142,7 +143,7 @@ func runLogin(noBrowser bool) error {
 }
 
 func runLogout() error {
-	creds := auth.GetValidCredentials()
+	creds, _ := auth.GetValidCredentials()
 	if creds == nil {
 		fmt.Println("You are not logged in.")
 		return nil
@@ -247,8 +248,7 @@ func fetchUserProfile(endpoint, accessToken string) (*userProfile, error) {
 
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := auth.HTTPClient.Do(req)
 	if err != nil {
 		debug.LogHTTP("GET", url, 0)
 		return nil, fmt.Errorf("request failed: %w", err)
@@ -256,7 +256,7 @@ func fetchUserProfile(endpoint, accessToken string) (*userProfile, error) {
 	defer resp.Body.Close()
 	debug.LogHTTP("GET", url, resp.StatusCode)
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, auth.MaxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -284,8 +284,7 @@ func fetchOrganization(endpoint, accessToken, orgID string) (*organization, erro
 
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := auth.HTTPClient.Do(req)
 	if err != nil {
 		debug.LogHTTP("GET", url, 0)
 		return nil, fmt.Errorf("request failed: %w", err)
@@ -297,7 +296,7 @@ func fetchOrganization(endpoint, accessToken, orgID string) (*organization, erro
 		return nil, fmt.Errorf("failed to fetch organization: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, auth.MaxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -321,12 +320,11 @@ func capitalizeFirst(s string) string {
 	return string(runes)
 }
 
-var authHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 func requestDeviceCode(endpoint string) (*auth.DeviceCodeResponse, error) {
 	url := endpoint + "/oauth/device/code"
 
-	resp, err := authHTTPClient.Post(url, "application/json", nil)
+	resp, err := auth.HTTPClient.Post(url, "application/json", nil)
 	if err != nil {
 		debug.LogHTTP("POST", url, 0)
 		return nil, fmt.Errorf("request failed: %w", err)
@@ -334,7 +332,7 @@ func requestDeviceCode(endpoint string) (*auth.DeviceCodeResponse, error) {
 	defer resp.Body.Close()
 	debug.LogHTTP("POST", url, resp.StatusCode)
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, auth.MaxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -372,14 +370,14 @@ func pollForToken(endpoint string, deviceResp *auth.DeviceCodeResponse) (*auth.T
 		default:
 		}
 
-		resp, err := authHTTPClient.Post(url, "application/json", bytes.NewReader(payloadBytes))
+		resp, err := auth.HTTPClient.Post(url, "application/json", bytes.NewReader(payloadBytes))
 		if err != nil {
 			debug.LogHTTP("POST", url, 0)
 			time.Sleep(interval)
 			continue
 		}
 
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, auth.MaxResponseSize))
 		resp.Body.Close()
 		debug.LogHTTP("POST", url, resp.StatusCode)
 
@@ -465,8 +463,7 @@ func registerMachine(endpoint, accessToken string) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := auth.HTTPClient.Do(req)
 	if err != nil {
 		debug.LogHTTP("POST", url, 0)
 		return fmt.Errorf("request failed: %w", err)
@@ -474,7 +471,7 @@ func registerMachine(endpoint, accessToken string) error {
 	defer resp.Body.Close()
 	debug.LogHTTP("POST", url, resp.StatusCode)
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, auth.MaxResponseSize))
 
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusCreated:

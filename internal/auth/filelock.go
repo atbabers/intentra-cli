@@ -18,12 +18,19 @@ const (
 	lockPollInterval = 50 * time.Millisecond
 )
 
-func getLockFile() string {
-	return filepath.Join(config.GetConfigDir(), lockFileName)
+func getLockFile() (string, error) {
+	dir, err := config.GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, lockFileName), nil
 }
 
 func acquireCredentialLock() (func(), error) {
-	lockFile := getLockFile()
+	lockFile, err := getLockFile()
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine lock path: %w", err)
+	}
 
 	if err := config.EnsureDirectories(); err != nil {
 		return nil, fmt.Errorf("failed to create config directory: %w", err)

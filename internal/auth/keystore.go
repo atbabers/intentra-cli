@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/99designs/keyring"
 	"github.com/atbabers/intentra-cli/internal/config"
@@ -32,7 +33,7 @@ func openKeyring() (keyring.Keyring, error) {
 			KeychainTrustApplication:       true,
 			KeychainSynchronizable:         false,
 			KeychainAccessibleWhenUnlocked: true,
-			FileDir:                        config.GetConfigDir(),
+			FileDir:                        func() string { d, _ := config.GetConfigDir(); return d }(),
 			FilePasswordFunc:               filePasswordPrompt,
 			AllowedBackends:                backends,
 		}
@@ -90,8 +91,9 @@ func storeCredentialsInKeyringUnlocked(creds *Credentials) error {
 	}
 
 	err = kr.Set(keyring.Item{
-		Key:  credentialsKey,
-		Data: data,
+		Key:   credentialsKey,
+		Label: "Intentra Credentials",
+		Data:  data,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to store credentials in keyring: %w", err)
@@ -106,9 +108,12 @@ func storeCredentialsInKeyringUnlocked(creds *Credentials) error {
 
 func LoadCredentialsFromKeyring() (*Credentials, error) {
 	if token := os.Getenv("INTENTRA_TOKEN"); token != "" {
+		fmt.Fprintf(os.Stderr, "Warning: using INTENTRA_TOKEN environment variable (bypasses secure storage)\n")
 		return &Credentials{
-			AccessToken: token,
-			TokenType:   "Bearer",
+			AccessToken:  token,
+			TokenType:    "Bearer",
+			ExpiresAt:    time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC),
+			RefreshToken: "env-token-no-refresh",
 		}, nil
 	}
 
@@ -149,55 +154,16 @@ func deleteCredentialsFromKeyringUnlocked() error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to delete encrypted cache: %v\n", err)
 	}
 
-	return DeleteCredentials()
-}
-
-func loadFromEncryptedCache() (*Credentials, error) {
-	creds, err := ReadEncryptedCache()
-	if err != nil {
-		return loadFromCleartextAndMigrate()
-	}
-	return creds, nil
-}
-
-func loadFromCleartextAndMigrate() (*Credentials, error) {
-	creds, err := LoadCredentials()
-	if err != nil || creds == nil {
-		return nil, err
-	}
-
-	// Migrate synchronously to avoid goroutine leak in a short-lived CLI process.
-	if err := MigrateToSecureStorage(creds); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: migration to secure storage failed: %v\n", err)
-	}
-
-	return creds, nil
-}
-
-func MigrateToSecureStorage(creds *Credentials) error {
-	if creds == nil {
-		return nil
-	}
-
-	if err := StoreCredentialsInKeyring(creds); err != nil {
-		if err := WriteEncryptedCache(creds); err != nil {
-			return fmt.Errorf("failed to write encrypted cache during migration: %w", err)
-		}
-	}
-
-	encCreds, err := ReadEncryptedCache()
-	if err != nil || encCreds == nil || encCreds.AccessToken != creds.AccessToken {
-		return fmt.Errorf("encrypted cache verification failed")
-	}
-
-	credFile := config.GetCredentialsFile()
-	if _, err := os.Stat(credFile); err == nil {
-		if err := os.Remove(credFile); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to remove cleartext credentials: %v\n", err)
-		}
+	// Clean up legacy cleartext credentials if they exist
+	if credFile, err := config.GetCredentialsFile(); err == nil {
+		os.Remove(credFile)
 	}
 
 	return nil
+}
+
+func loadFromEncryptedCache() (*Credentials, error) {
+	return ReadEncryptedCache()
 }
 
 func GetOrCreateCacheKey() ([]byte, error) {
@@ -218,8 +184,9 @@ func GetOrCreateCacheKey() ([]byte, error) {
 	}
 
 	_ = kr.Set(keyring.Item{
-		Key:  cacheKeyKey,
-		Data: key,
+		Key:   cacheKeyKey,
+		Label: "Intentra Cache Key",
+		Data:  key,
 	})
 
 	return key, nil

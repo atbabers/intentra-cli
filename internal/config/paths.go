@@ -8,61 +8,95 @@ import (
 )
 
 // GetConfigDir returns the OS-appropriate config directory.
-// Panics if the home directory cannot be determined and no override is set,
-// since all downstream callers depend on a valid path.
-func GetConfigDir() string {
-	// Allow override for testing
+// Returns an error if the home directory cannot be determined and no override is set.
+func GetConfigDir() (string, error) {
 	if dir := os.Getenv("INTENTRA_CONFIG_DIR"); dir != "" {
-		return dir
+		return dir, nil
 	}
 
 	switch runtime.GOOS {
 	case "windows":
-		return filepath.Join(os.Getenv("APPDATA"), "intentra")
+		return filepath.Join(os.Getenv("APPDATA"), "intentra"), nil
 	default:
 		home, err := os.UserHomeDir()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: cannot determine home directory: %v\n", err)
-			fmt.Fprintf(os.Stderr, "Set INTENTRA_CONFIG_DIR to override.\n")
-			os.Exit(1)
+			return "", fmt.Errorf("cannot determine home directory (set INTENTRA_CONFIG_DIR to override): %w", err)
 		}
-		return filepath.Join(home, ".intentra")
+		return filepath.Join(home, ".intentra"), nil
 	}
 }
 
 // GetDataDir returns the data directory (same as config for now).
-func GetDataDir() string {
+func GetDataDir() (string, error) {
 	return GetConfigDir()
 }
 
 // GetEventsFile returns the path to events.jsonl.
-func GetEventsFile() string {
-	return filepath.Join(GetDataDir(), "events.jsonl")
+func GetEventsFile() (string, error) {
+	dir, err := GetDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "events.jsonl"), nil
 }
 
 // GetScansDir returns the scans directory.
-func GetScansDir() string {
-	return filepath.Join(GetDataDir(), "scans")
+func GetScansDir() (string, error) {
+	dir, err := GetDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "scans"), nil
 }
 
 // GetEvidenceDir returns the evidence directory.
-func GetEvidenceDir() string {
-	return filepath.Join(GetDataDir(), "evidence")
+func GetEvidenceDir() (string, error) {
+	dir, err := GetDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "evidence"), nil
 }
 
 // GetCredentialsFile returns the path to the credentials file.
-func GetCredentialsFile() string {
-	return filepath.Join(GetConfigDir(), "credentials.json")
+func GetCredentialsFile() (string, error) {
+	dir, err := GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "credentials.json"), nil
+}
+
+// GetConfigPath returns the path to the config file.
+func GetConfigPath() (string, error) {
+	dir, err := GetConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.yaml"), nil
 }
 
 // EnsureDirectories creates all required directories.
 func EnsureDirectories() error {
+	configDir, err := GetConfigDir()
+	if err != nil {
+		return err
+	}
+	scansDir, err := GetScansDir()
+	if err != nil {
+		return err
+	}
+	evidenceDir, err := GetEvidenceDir()
+	if err != nil {
+		return err
+	}
+
 	dirs := []string{
-		GetConfigDir(),
-		GetScansDir(),
-		GetEvidenceDir(),
-		filepath.Join(GetEvidenceDir(), "reviewed"),
-		filepath.Join(GetEvidenceDir(), "rejected"),
+		configDir,
+		scansDir,
+		evidenceDir,
+		filepath.Join(evidenceDir, "reviewed"),
+		filepath.Join(evidenceDir, "rejected"),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0700); err != nil {

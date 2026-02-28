@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-02-27
+
+### Added
+- HMAC-SHA256 API key authentication: `hmac_key` config field signs requests so the raw secret never leaves the client; falls back to legacy bcrypt mode when only `secret` is set
+- `intentra login --force` flag to re-authenticate without logging out first
+- `INTENTRA_API_HMAC_KEY` environment variable for HMAC key configuration
+- `Label` metadata on OS keyring entries for better visibility in macOS Keychain and similar tools
+- `tableNormalizer` generic type for event normalization, replacing per-tool normalizer structs
+- `toolOps` registry for hook install/uninstall/status, replacing per-tool switch statements
+- Unified `mergeHookEntries`, `isIntentraEntry`, and `removeIntentraFromHooks` helpers replacing duplicated per-tool hook management functions
+- Shared `auth.HTTPClient` (30s timeout) and exported `auth.MaxResponseSize` replacing scattered per-function HTTP clients
+- Cache key lookup from OS keyring before falling back to file in `readCacheKey`
+- Comprehensive test coverage: `EstimateCost`, `CalculateFingerprint`, `CalculateFilesHash`, `CalculateActionCounts`, `AggregateFilesModified`, `SanitizePath`, `BuildAPIPayload`, `SanitizeMCPServerURL`, `SanitizeMCPServerCmd`, `ParseMCPDoubleUnderscoreName`, `MCPServerURLHash`, `IsMCPEvent`, auth credential tests, archive tests
+
+### Changed
+- `GetConfigDir`, `GetDataDir`, `GetEventsFile`, `GetScansDir`, `GetEvidenceDir`, `GetCredentialsFile`, `GetConfigPath` now return `(string, error)` instead of panicking or calling `os.Exit`
+- `GetValidCredentials` returns `(*Credentials, error)` with structured errors instead of silent `nil` on failures
+- `RefreshCredentials` extracted HTTP call into `doRefreshHTTP`; refresh now runs outside lock with re-check pattern to reduce lock contention
+- `createAggregatedScan` decomposed into `initScan`, `aggregateEventMetrics`, `detectFirstString`, `extractSessionEndMetadata`
+- `normalizeHookEvent` decomposed into `extractIdentifiers`, `extractToolMetadata`, `extractToolIO`, `extractContentFields`, `extractErrorFields`
+- `ProcessEventWithEvent` decomposed into `deriveSessionKey`, `handleStopEvent`, `handleSessionEndEvent`
+- API key validation uses `req.URL.Scheme` instead of string prefix matching
+- `intentra login` when already logged in now returns success with guidance instead of an error
+- `INTENTRA_TOKEN` env var now warns on stderr and sets proper `ExpiresAt` and `RefreshToken` fields
+- Compaction percent clamping uses `min(max(...))` builtins
+- Manager test uses `strings.Contains` instead of custom `contains` function
+
+### Removed
+- Cleartext credential storage: `LoadCredentials`, `SaveCredentials`, `DeleteCredentials` functions
+- `MigrateToSecureStorage` and `loadFromCleartextAndMigrate` migration path (users with cleartext credentials must re-login)
+- Per-tool normalizer structs (`ClaudeNormalizer`, `CursorNormalizer`, `GeminiNormalizer`, `CopilotNormalizer`, `WindsurfNormalizer`) replaced by `tableNormalizer`
+- Per-tool hook management functions (`removeIntentraHooks`, `removeIntentraHooksFromMap`, `removeIntentraHooksFromCopilot`, `removeIntentraHooksFromGemini`, `mergeHooks`, `mergeHookMaps`, `mergeGeminiHooks`) replaced by unified helpers
+- Duplicate `maxResponseSize` constants and per-function `http.Client` instances
+
+### Fixed
+- `SendScan` now checks `io.ReadAll` error instead of discarding it
+- `saveLastScanID` and `clearLastScanID` now handle write/remove errors with debug logging
+- `extractCopilotMCP` uses `_` for unused parameter
+
+### Security
+- HMAC-SHA256 signing mode prevents raw API key secrets from being transmitted over the wire
+- Cleartext credential fallback path removed; credentials are stored only in OS keyring or AES-256-GCM encrypted cache
+
 ## [0.11.0] - 2026-02-25
 
 ### Added
@@ -367,6 +410,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.12.0]: https://github.com/atbabers/intentra-cli/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/atbabers/intentra-cli/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/atbabers/intentra-cli/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/atbabers/intentra-cli/compare/v0.9.0...v0.9.1

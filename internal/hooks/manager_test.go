@@ -3,6 +3,7 @@ package hooks
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -15,10 +16,10 @@ func TestGenerateHooksJSON(t *testing.T) {
 	if json == "" {
 		t.Error("GenerateCursorHooksJSON returned empty string")
 	}
-	if !contains(json, "sessionStart") {
+	if !strings.Contains(json, "sessionStart") {
 		t.Error("Missing sessionStart hook")
 	}
-	if !contains(json, "\"version\": 1") {
+	if !strings.Contains(json, "\"version\": 1") {
 		t.Error("Missing version field")
 	}
 
@@ -138,11 +139,3 @@ func TestInstallCursor(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}

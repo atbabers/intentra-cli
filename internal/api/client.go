@@ -5,14 +5,15 @@ package api
 
 import (
 	"bytes"
+	"crypto/hmac"
 	cryptoRand "crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/atbabers/intentra-cli/internal/auth"
@@ -102,7 +103,10 @@ func (c *Client) SendScan(scan *models.Scan) error {
 	debug.LogHTTP("POST", url, resp.StatusCode)
 
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+		if readErr != nil {
+			return fmt.Errorf("API returned %d (failed to read body: %w)", resp.StatusCode, readErr)
+		}
 		return fmt.Errorf("API returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -122,7 +126,10 @@ func (c *Client) SendScans(scans []*models.Scan) error {
 // addAuth adds authentication headers based on config.
 // Priority: JWT credentials (from 'intentra login') > config auth mode (api_key)
 func (c *Client) addAuth(req *http.Request) error {
-	creds := auth.GetValidCredentials()
+	creds, err := auth.GetValidCredentials()
+	if err != nil {
+		debug.Warn("credential check failed: %v", err)
+	}
 	if creds != nil {
 		return c.addJWTAuth(req)
 	}
@@ -136,21 +143,23 @@ func (c *Client) addAuth(req *http.Request) error {
 }
 
 // addAPIKeyAuth adds API key authentication headers for Enterprise organizations.
-// Server expects: X-API-Key-ID, X-API-Key-Secret, X-API-Timestamp, X-API-Nonce
-// The secret is verified server-side using bcrypt against the stored hash.
-// HTTPS is enforced to protect the secret in transit.
-// TODO: Migrate to HMAC-SHA256 signing once the server stores an hmac_key
-// alongside the bcrypt hash, eliminating raw secret transmission.
+// When hmac_key is configured, signs the request with HMAC-SHA256 so the raw
+// secret never leaves the client. Falls back to legacy bcrypt mode when only
+// secret is configured (for keys created before HMAC support).
 func (c *Client) addAPIKeyAuth(req *http.Request) error {
-	if !strings.HasPrefix(req.URL.String(), "https://") {
+	if req.URL.Scheme != "https" {
 		return fmt.Errorf("API key auth requires HTTPS; refusing to send credentials over HTTP")
 	}
 
 	keyID := c.cfg.Server.Auth.APIKey.KeyID
+	hmacKey := c.cfg.Server.Auth.APIKey.HMACKey
 	secret := c.cfg.Server.Auth.APIKey.Secret
 
-	if keyID == "" || secret == "" {
-		return fmt.Errorf("API key auth requires key_id and secret")
+	if keyID == "" {
+		return fmt.Errorf("API key auth requires key_id")
+	}
+	if hmacKey == "" && secret == "" {
+		return fmt.Errorf("API key auth requires hmac_key (preferred) or secret")
 	}
 
 	timestamp := time.Now().UTC().Format(time.RFC3339)
@@ -162,16 +171,28 @@ func (c *Client) addAPIKeyAuth(req *http.Request) error {
 	nonce := hex.EncodeToString(nonceBytes)
 
 	req.Header.Set("X-API-Key-ID", keyID)
-	req.Header.Set("X-API-Key-Secret", secret)
 	req.Header.Set("X-API-Timestamp", timestamp)
 	req.Header.Set("X-API-Nonce", nonce)
+
+	if hmacKey != "" {
+		message := fmt.Sprintf("%s\n%s\n%s\n%s", req.Method, req.URL.Path, timestamp, nonce)
+		mac := hmac.New(sha256.New, []byte(hmacKey))
+		mac.Write([]byte(message))
+		signature := hex.EncodeToString(mac.Sum(nil))
+		req.Header.Set("X-API-Key-Signature", signature)
+	} else {
+		req.Header.Set("X-API-Key-Secret", secret)
+	}
 
 	return nil
 }
 
 // addJWTAuth adds JWT Bearer token authentication from stored credentials.
 func (c *Client) addJWTAuth(req *http.Request) error {
-	creds := auth.GetValidCredentials()
+	creds, err := auth.GetValidCredentials()
+	if err != nil {
+		return fmt.Errorf("credential retrieval failed: %w", err)
+	}
 	if creds == nil {
 		return fmt.Errorf("not authenticated - run 'intentra login' first")
 	}

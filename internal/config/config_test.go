@@ -7,7 +7,10 @@ import (
 )
 
 func TestGetConfigDir(t *testing.T) {
-	dir := GetConfigDir()
+	dir, err := GetConfigDir()
+	if err != nil {
+		t.Fatalf("GetConfigDir returned error: %v", err)
+	}
 	if dir == "" {
 		t.Error("GetConfigDir returned empty string")
 	}

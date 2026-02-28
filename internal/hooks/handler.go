@@ -58,7 +58,9 @@ func getLastScanPath(sessionKey string) string {
 
 func saveLastScanID(sessionKey, scanID string) {
 	path := getLastScanPath(sessionKey)
-	os.WriteFile(path, []byte(scanID), 0600)
+	if err := os.WriteFile(path, []byte(scanID), 0600); err != nil {
+		debug.Log("failed to write scan ID file: %v", err)
+	}
 }
 
 func getLastScanID(sessionKey string) string {
@@ -72,7 +74,9 @@ func getLastScanID(sessionKey string) string {
 
 func clearLastScanID(sessionKey string) {
 	path := getLastScanPath(sessionKey)
-	os.Remove(path)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		debug.Log("failed to remove scan ID file: %v", err)
+	}
 }
 
 func appendToBuffer(sessionKey string, event *models.Event, rawEvent map[string]any) error {
@@ -199,11 +203,48 @@ func collectGitMetadata() (repoName, repoURLHash, branchName string) {
 	return
 }
 
+// --- createAggregatedScan and helpers ---
+
 func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 	if len(events) == 0 {
 		return nil
 	}
 
+	scan := initScan(events, tool)
+	aggregateEventMetrics(events, scan)
+
+	scan.Model = detectFirstString(events, func(e *models.Event) string { return e.Model })
+	scan.GenerationID = detectFirstString(events, func(e *models.Event) string { return e.GenerationID })
+
+	model := scan.Model
+	if model == "" {
+		if tool == "copilot" {
+			model = "gpt-4o"
+		} else {
+			model = "claude-sonnet-4.5"
+		}
+	}
+	scan.EstimatedCost = scanner.EstimateCost(scan.TotalTokens, model)
+
+	scan.MCPToolUsage = aggregateMCPToolUsage(events, scan.EstimatedCost)
+
+	repoName, repoURLHash, branchName := collectGitMetadata()
+	scan.RepoName = repoName
+	scan.RepoURLHash = repoURLHash
+	scan.BranchName = branchName
+
+	var allEvents []models.Event
+	for _, entry := range events {
+		allEvents = append(allEvents, *entry.Event)
+	}
+	scan.FilesModified = scanner.AggregateFilesModified(allEvents)
+
+	extractSessionEndMetadata(scan, tool, events)
+
+	return scan
+}
+
+func initScan(events []bufferedEvent, tool string) *models.Scan {
 	first := events[0]
 	last := events[len(events)-1]
 
@@ -228,6 +269,10 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 		SessionID: first.Event.SessionID,
 	}
 
+	return scan
+}
+
+func aggregateEventMetrics(events []bufferedEvent, scan *models.Scan) {
 	const maxPreCompactEvents = 10
 	preCompactCount := 0
 
@@ -264,65 +309,38 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 	}
 
 	scan.TotalTokens = scan.InputTokens + scan.OutputTokens + scan.ThinkingTokens
+}
 
+func detectFirstString(events []bufferedEvent, extract func(*models.Event) string) string {
 	for _, entry := range events {
-		if entry.Event.Model != "" {
-			scan.Model = entry.Event.Model
-			break
+		if v := extract(entry.Event); v != "" {
+			return v
 		}
 	}
+	return ""
+}
 
-	for _, entry := range events {
-		if entry.Event.GenerationID != "" {
-			scan.GenerationID = entry.Event.GenerationID
-			break
-		}
+func extractSessionEndMetadata(scan *models.Scan, tool string, events []bufferedEvent) {
+	if tool != "copilot" && tool != "gemini" {
+		return
 	}
-
-	model := scan.Model
-	if model == "" {
-		if tool == "copilot" {
-			model = "gpt-4o"
-		} else {
-			model = "claude-sonnet-4.5"
-		}
-	}
-	scan.EstimatedCost = scanner.EstimateCost(scan.TotalTokens, model)
-
-	scan.MCPToolUsage = aggregateMCPToolUsage(events, scan.EstimatedCost)
-
-	repoName, repoURLHash, branchName := collectGitMetadata()
-	scan.RepoName = repoName
-	scan.RepoURLHash = repoURLHash
-	scan.BranchName = branchName
-
-	var allEvents []models.Event
-	for _, entry := range events {
-		allEvents = append(allEvents, *entry.Event)
-	}
-	scan.FilesModified = scanner.AggregateFilesModified(allEvents)
-
-	if tool == "copilot" || tool == "gemini" {
-		for i := len(events) - 1; i >= 0; i-- {
-			entry := events[i]
-			if NormalizedEventType(entry.Event.NormalizedType) == EventSessionEnd && entry.RawEvent != nil {
-				if reason, ok := entry.RawEvent["reason"].(string); ok && reason != "" {
-					scan.SessionEndReason = reason
-				}
-				switch v := entry.RawEvent["duration_ms"].(type) {
-				case float64:
-					scan.SessionDurationMs = int64(v)
-				case json.Number:
-					if n, err := v.Int64(); err == nil {
-						scan.SessionDurationMs = n
-					}
-				}
-				break
+	for i := len(events) - 1; i >= 0; i-- {
+		entry := events[i]
+		if NormalizedEventType(entry.Event.NormalizedType) == EventSessionEnd && entry.RawEvent != nil {
+			if reason, ok := entry.RawEvent["reason"].(string); ok && reason != "" {
+				scan.SessionEndReason = reason
 			}
+			switch v := entry.RawEvent["duration_ms"].(type) {
+			case float64:
+				scan.SessionDurationMs = int64(v)
+			case json.Number:
+				if n, err := v.Int64(); err == nil {
+					scan.SessionDurationMs = n
+				}
+			}
+			break
 		}
 	}
-
-	return scan
 }
 
 // aggregateMCPToolUsage builds per-server/tool usage summaries from buffered events.
@@ -391,6 +409,8 @@ func aggregateMCPToolUsage(events []bufferedEvent, totalScanCost float64) []mode
 	return result
 }
 
+// --- normalizeHookEvent and helpers ---
+
 func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, map[string]any, NormalizedEventType, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(rawJSON, &raw); err != nil {
@@ -406,13 +426,26 @@ func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, 
 		NormalizedType: string(normalizedType),
 	}
 
+	extractIdentifiers(event, raw)
+	extractToolMetadata(event, raw)
+	extractToolIO(event, raw)
+	extractContentFields(event, raw)
+	extractErrorFields(event, raw)
+	extractMCPMetadata(event, raw, tool, normalizedType)
+	extractCompactionMetadata(event, raw, normalizedType)
+
+	sanitizeEvent(event)
+
+	return event, raw, normalizedType, nil
+}
+
+func extractIdentifiers(event *models.Event, raw map[string]any) {
 	if v, ok := raw["conversation_id"].(string); ok {
 		event.ConversationID = v
 	}
 	if v, ok := raw["session_id"].(string); ok {
 		event.SessionID = v
 	}
-
 	if v, ok := raw["trajectory_id"].(string); ok && event.ConversationID == "" {
 		event.ConversationID = v
 	}
@@ -426,7 +459,9 @@ func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, 
 	if v, ok := raw["turn_id"].(string); ok && event.GenerationID == "" {
 		event.GenerationID = v
 	}
+}
 
+func extractToolMetadata(event *models.Event, raw map[string]any) {
 	if v, ok := raw["hook_event_name"].(string); ok && event.HookType == "" {
 		event.HookType = models.HookType(v)
 	}
@@ -447,7 +482,9 @@ func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, 
 	if v, ok := raw["toolName"].(string); ok && event.ToolName == "" {
 		event.ToolName = v
 	}
+}
 
+func extractToolIO(event *models.Event, raw map[string]any) {
 	if toolInput, ok := raw["tool_input"].(map[string]any); ok {
 		if inputJSON, err := json.Marshal(toolInput); err == nil {
 			event.ToolInput = inputJSON
@@ -503,7 +540,9 @@ func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, 
 			}
 		}
 	}
+}
 
+func extractContentFields(event *models.Event, raw map[string]any) {
 	if v, ok := raw["command"].(string); ok && event.Command == "" {
 		event.Command = v
 	}
@@ -549,7 +588,9 @@ func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, 
 	if v, ok := raw["output_tokens"].(float64); ok {
 		event.OutputTokens = int(v)
 	}
+}
 
+func extractErrorFields(event *models.Event, raw map[string]any) {
 	if errObj, ok := raw["error"].(map[string]any); ok {
 		if msg, ok := errObj["message"].(string); ok {
 			event.Response = "Error: " + msg
@@ -558,13 +599,6 @@ func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, 
 	} else if errStr, ok := raw["error"].(string); ok && errStr != "" {
 		event.Error = errStr
 	}
-
-	extractMCPMetadata(event, raw, tool, normalizedType)
-	extractCompactionMetadata(event, raw, normalizedType)
-
-	sanitizeEvent(event)
-
-	return event, raw, normalizedType, nil
 }
 
 // redactContent replaces a content string with a length-preserving placeholder.
@@ -622,14 +656,7 @@ func extractCompactionMetadata(event *models.Event, raw map[string]any, normaliz
 	}
 
 	if v, ok := raw["context_usage_percent"].(float64); ok {
-		pct := int(v)
-		if pct < 0 {
-			pct = 0
-		}
-		if pct > 100 {
-			pct = 100
-		}
-		event.ContextUsagePercent = pct
+		event.ContextUsagePercent = min(max(int(v), 0), 100)
 	}
 
 	if v, ok := raw["context_tokens"].(float64); ok && v >= 0 {
@@ -751,7 +778,7 @@ func extractClaudeGeminiMCP(event *models.Event, raw map[string]any) {
 
 // extractCopilotMCP handles GitHub Copilot MCP calls.
 // Copilot does not expose server names, so we use a pseudo-server.
-func extractCopilotMCP(event *models.Event, raw map[string]any) {
+func extractCopilotMCP(event *models.Event, _ map[string]any) {
 	event.MCPServerName = "copilot-mcp"
 	if event.ToolName != "" {
 		event.MCPToolName = event.ToolName
@@ -864,6 +891,8 @@ func extractHostFromURL(rawURL string) string {
 	return host
 }
 
+// --- ProcessEventWithEvent and helpers ---
+
 // ProcessEventWithEvent buffers events and sends aggregated scan on stop events.
 func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType string) error {
 	cleanupStaleBuffers()
@@ -898,6 +927,24 @@ func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType
 		}
 	}
 
+	sessionKey, tool := deriveSessionKey(event, tool)
+
+	if IsStopEvent(normalizedType, tool) {
+		return handleStopEvent(sessionKey, tool, event, rawMap, cfg)
+	}
+
+	if IsSessionEndEvent(normalizedType, tool) {
+		return handleSessionEndEvent(sessionKey, rawMap)
+	}
+
+	if err := appendToBuffer(sessionKey, event, rawMap); err != nil {
+		return fmt.Errorf("failed to buffer event: %w", err)
+	}
+
+	return nil
+}
+
+func deriveSessionKey(event *models.Event, tool string) (string, string) {
 	baseKey := event.ConversationID
 	if baseKey == "" {
 		baseKey = event.SessionID
@@ -924,105 +971,107 @@ func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType
 		}
 	}
 
-	if IsStopEvent(normalizedType, tool) {
-		if err := appendToBuffer(sessionKey, event, rawMap); err != nil {
-			return fmt.Errorf("failed to buffer event: %w", err)
-		}
+	return sessionKey, tool
+}
 
-		bufferedEvents, err := readAndClearBuffer(sessionKey)
-		if err != nil {
-			return fmt.Errorf("failed to read buffer: %w", err)
-		}
-
-		if len(bufferedEvents) == 0 {
-			return nil
-		}
-
-		scan := createAggregatedScan(bufferedEvents, tool)
-		if scan == nil {
-			return nil
-		}
-
-		synced := false
-
-		creds := auth.GetValidCredentials()
-		if creds != nil {
-			if err := syncScanWithJWT(scan, creds.AccessToken); err != nil {
-				debug.Warn("failed to sync to api.intentra.sh: %v", err)
-			} else {
-				debug.Log("Synced to https://api.intentra.sh")
-				synced = true
-			}
-		}
-
-		if !synced && cfg.Server.Enabled {
-			client, err := api.NewClient(cfg)
-			if err == nil {
-				debug.Log("Syncing to %s (config auth)", cfg.Server.Endpoint)
-				if err := client.SendScan(scan); err != nil {
-					debug.Warn("sync failed: %v", err)
-				}
-			}
-		}
-
-		if synced && scan.ID != "" {
-			saveLastScanID(sessionKey, scan.ID)
-		}
-
-		if debug.Enabled {
-			if err := scanner.SaveScan(scan); err != nil {
-				debug.Warn("failed to save scan locally: %v", err)
-			} else {
-				debug.Log("Saved scan locally: %s", scan.ID)
-			}
-		}
-
-		return nil
-	}
-
-	if IsSessionEndEvent(normalizedType, tool) {
-		lastScanID := getLastScanID(sessionKey)
-		if lastScanID == "" {
-			debug.Log("sessionEnd event but no lastScanID for session %s, ignoring", sessionKey)
-			return nil
-		}
-
-		creds := auth.GetValidCredentials()
-		if creds == nil {
-			debug.Log("sessionEnd event but no valid credentials, ignoring")
-			return nil
-		}
-
-		reason := ""
-		durationMs := int64(0)
-		if rawMap != nil {
-			if r, ok := rawMap["reason"].(string); ok {
-				reason = r
-			}
-			switch v := rawMap["duration_ms"].(type) {
-			case float64:
-				durationMs = int64(v)
-			case json.Number:
-				if n, err := v.Int64(); err == nil {
-					durationMs = n
-				}
-			}
-		}
-
-		if err := patchSessionEnd(lastScanID, creds.AccessToken, reason, durationMs); err != nil {
-			debug.Warn("failed to PATCH session end: %v", err)
-		} else {
-			debug.Log("PATCHed session end for scan %s", lastScanID)
-		}
-
-		clearLastScanID(sessionKey)
-		return nil
-	}
-
+func handleStopEvent(sessionKey, tool string, event *models.Event, rawMap map[string]any, cfg *config.Config) error {
 	if err := appendToBuffer(sessionKey, event, rawMap); err != nil {
 		return fmt.Errorf("failed to buffer event: %w", err)
 	}
 
+	bufferedEvents, err := readAndClearBuffer(sessionKey)
+	if err != nil {
+		return fmt.Errorf("failed to read buffer: %w", err)
+	}
+
+	if len(bufferedEvents) == 0 {
+		return nil
+	}
+
+	scan := createAggregatedScan(bufferedEvents, tool)
+	if scan == nil {
+		return nil
+	}
+
+	synced := false
+
+	creds, credErr := auth.GetValidCredentials()
+	if credErr != nil {
+		debug.Warn("credential check failed: %v", credErr)
+	}
+	if creds != nil {
+		if err := syncScanWithJWT(scan, creds.AccessToken); err != nil {
+			debug.Warn("failed to sync to api.intentra.sh: %v", err)
+		} else {
+			debug.Log("Synced to https://api.intentra.sh")
+			synced = true
+		}
+	}
+
+	if !synced && cfg.Server.Enabled {
+		client, err := api.NewClient(cfg)
+		if err == nil {
+			debug.Log("Syncing to %s (config auth)", cfg.Server.Endpoint)
+			if err := client.SendScan(scan); err != nil {
+				debug.Warn("sync failed: %v", err)
+			}
+		}
+	}
+
+	if synced && scan.ID != "" {
+		saveLastScanID(sessionKey, scan.ID)
+	}
+
+	if debug.Enabled {
+		if err := scanner.SaveScan(scan); err != nil {
+			debug.Warn("failed to save scan locally: %v", err)
+		} else {
+			debug.Log("Saved scan locally: %s", scan.ID)
+		}
+	}
+
+	return nil
+}
+
+func handleSessionEndEvent(sessionKey string, rawMap map[string]any) error {
+	lastScanID := getLastScanID(sessionKey)
+	if lastScanID == "" {
+		debug.Log("sessionEnd event but no lastScanID for session %s, ignoring", sessionKey)
+		return nil
+	}
+
+	creds, err := auth.GetValidCredentials()
+	if err != nil {
+		debug.Warn("credential check failed: %v", err)
+	}
+	if creds == nil {
+		debug.Log("sessionEnd event but no valid credentials, ignoring")
+		return nil
+	}
+
+	reason := ""
+	durationMs := int64(0)
+	if rawMap != nil {
+		if r, ok := rawMap["reason"].(string); ok {
+			reason = r
+		}
+		switch v := rawMap["duration_ms"].(type) {
+		case float64:
+			durationMs = int64(v)
+		case json.Number:
+			if n, err := v.Int64(); err == nil {
+				durationMs = n
+			}
+		}
+	}
+
+	if err := patchSessionEnd(lastScanID, creds.AccessToken, reason, durationMs); err != nil {
+		debug.Warn("failed to PATCH session end: %v", err)
+	} else {
+		debug.Log("PATCHed session end for scan %s", lastScanID)
+	}
+
+	clearLastScanID(sessionKey)
 	return nil
 }
 

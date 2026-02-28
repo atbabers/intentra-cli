@@ -33,6 +33,53 @@ type ToolStatus struct {
 	Error     error
 }
 
+// toolOps defines per-tool install, uninstall, and status-check operations.
+type toolOps struct {
+	install   func(string) error
+	uninstall func() error
+	checkFile string
+	// checkHook inspects parsed JSON config to determine if hooks are installed.
+	// Nil means file existence alone is sufficient.
+	checkHook func(config map[string]any) bool
+}
+
+var toolRegistry = map[Tool]toolOps{
+	ToolCursor: {
+		install: installCursor, uninstall: uninstallCursor,
+		checkFile: "hooks.json",
+		checkHook: nil,
+	},
+	ToolClaudeCode: {
+		install: installClaudeCode, uninstall: uninstallClaudeCode,
+		checkFile: "settings.json",
+		checkHook: func(c map[string]any) bool { _, ok := c["hooks"]; return ok },
+	},
+	ToolGeminiCLI: {
+		install: installGeminiCLI, uninstall: uninstallGeminiCLI,
+		checkFile: "settings.json",
+		checkHook: func(c map[string]any) bool {
+			hooks, ok := c["hooks"].(map[string]any)
+			return ok && len(hooks) > 0
+		},
+	},
+	ToolCopilot: {
+		install: installCopilot, uninstall: uninstallCopilot,
+		checkFile: "hooks.json",
+		checkHook: func(c map[string]any) bool {
+			hooks, ok := c["hooks"].(map[string]any)
+			return ok && len(hooks) > 0
+		},
+	},
+	ToolWindsurf: {
+		install: installWindsurf, uninstall: uninstallWindsurf,
+		checkFile: "hooks.json",
+		checkHook: func(c map[string]any) bool {
+			hooks, ok := c["hooks"].(map[string]any)
+			return ok && len(hooks) > 0
+		},
+	},
+}
+
 // GetHooksDir returns the hooks directory for a tool.
 func GetHooksDir(tool Tool) (string, error) {
 	home, err := os.UserHomeDir()
@@ -97,20 +144,11 @@ func getWindsurfHooksDir(home string) (string, error) {
 
 // Install installs hooks for the specified tool.
 func Install(tool Tool, handlerPath string) error {
-	switch tool {
-	case ToolCursor:
-		return installCursor(handlerPath)
-	case ToolClaudeCode:
-		return installClaudeCode(handlerPath)
-	case ToolGeminiCLI:
-		return installGeminiCLI(handlerPath)
-	case ToolCopilot:
-		return installCopilot(handlerPath)
-	case ToolWindsurf:
-		return installWindsurf(handlerPath)
-	default:
+	ops, ok := toolRegistry[tool]
+	if !ok {
 		return fmt.Errorf("unknown tool: %s", tool)
 	}
+	return ops.install(handlerPath)
 }
 
 // InstallAll installs hooks for all supported tools.
@@ -124,20 +162,11 @@ func InstallAll(handlerPath string) map[Tool]error {
 
 // Uninstall removes hooks for the specified tool.
 func Uninstall(tool Tool) error {
-	switch tool {
-	case ToolCursor:
-		return uninstallCursor()
-	case ToolClaudeCode:
-		return uninstallClaudeCode()
-	case ToolGeminiCLI:
-		return uninstallGeminiCLI()
-	case ToolCopilot:
-		return uninstallCopilot()
-	case ToolWindsurf:
-		return uninstallWindsurf()
-	default:
+	ops, ok := toolRegistry[tool]
+	if !ok {
 		return fmt.Errorf("unknown tool: %s", tool)
 	}
+	return ops.uninstall()
 }
 
 // UninstallAll removes hooks for all supported tools.
@@ -176,90 +205,107 @@ func checkStatus(tool Tool) (bool, string, error) {
 		return false, "", err
 	}
 
-	switch tool {
-	case ToolCursor:
-		hooksFile := filepath.Join(dir, "hooks.json")
-		if _, err := os.Stat(hooksFile); os.IsNotExist(err) {
-			return false, dir, nil
-		}
-		return true, dir, nil
-
-	case ToolClaudeCode:
-		settingsFile := filepath.Join(dir, "settings.json")
-		if _, err := os.Stat(settingsFile); os.IsNotExist(err) {
-			return false, dir, nil
-		}
-		// Check if hooks are configured
-		data, err := os.ReadFile(settingsFile)
-		if err != nil {
-			return false, dir, err
-		}
-		var settings map[string]any
-		if err := json.Unmarshal(data, &settings); err != nil {
-			return false, dir, err
-		}
-		if _, ok := settings["hooks"]; ok {
-			return true, dir, nil
-		}
-		return false, dir, nil
-
-	case ToolGeminiCLI:
-		settingsFile := filepath.Join(dir, "settings.json")
-		if _, err := os.Stat(settingsFile); os.IsNotExist(err) {
-			return false, dir, nil
-		}
-		data, err := os.ReadFile(settingsFile)
-		if err != nil {
-			return false, dir, err
-		}
-		var settings map[string]any
-		if err := json.Unmarshal(data, &settings); err != nil {
-			return false, dir, err
-		}
-		if hooks, ok := settings["hooks"].(map[string]any); ok && len(hooks) > 0 {
-			return true, dir, nil
-		}
-		return false, dir, nil
-
-	case ToolCopilot:
-		hooksFile := filepath.Join(dir, "hooks.json")
-		if _, err := os.Stat(hooksFile); os.IsNotExist(err) {
-			return false, dir, nil
-		}
-		data, err := os.ReadFile(hooksFile)
-		if err != nil {
-			return false, dir, err
-		}
-		var config map[string]any
-		if err := json.Unmarshal(data, &config); err != nil {
-			return false, dir, err
-		}
-		if hooks, ok := config["hooks"].(map[string]any); ok && len(hooks) > 0 {
-			return true, dir, nil
-		}
-		return false, dir, nil
-
-	case ToolWindsurf:
-		hooksFile := filepath.Join(dir, "hooks.json")
-		if _, err := os.Stat(hooksFile); os.IsNotExist(err) {
-			return false, dir, nil
-		}
-		data, err := os.ReadFile(hooksFile)
-		if err != nil {
-			return false, dir, err
-		}
-		var config map[string]any
-		if err := json.Unmarshal(data, &config); err != nil {
-			return false, dir, err
-		}
-		if hooks, ok := config["hooks"].(map[string]any); ok && len(hooks) > 0 {
-			return true, dir, nil
-		}
-		return false, dir, nil
-
-	default:
+	ops, ok := toolRegistry[tool]
+	if !ok {
 		return false, "", fmt.Errorf("unknown tool: %s", tool)
 	}
+
+	filePath := filepath.Join(dir, ops.checkFile)
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return false, dir, nil
+	}
+
+	if ops.checkHook == nil {
+		return true, dir, nil
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return false, dir, err
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		return false, dir, err
+	}
+	return ops.checkHook(config), dir, nil
+}
+
+// mergeHookEntries merges incoming hook entries into existing hooks by event type.
+// For each event type, if existing entries exist as []any, new entries are appended.
+func mergeHookEntries(existing, incoming map[string]any) map[string]any {
+	merged := make(map[string]any)
+	for k, v := range existing {
+		merged[k] = v
+	}
+	for eventType, newList := range incoming {
+		existingList, ok := merged[eventType].([]any)
+		if !ok {
+			merged[eventType] = newList
+			continue
+		}
+		switch nl := newList.(type) {
+		case []any:
+			existingList = append(existingList, nl...)
+		case []map[string]any:
+			for _, item := range nl {
+				existingList = append(existingList, item)
+			}
+		}
+		merged[eventType] = existingList
+	}
+	return merged
+}
+
+// isIntentraEntry returns true if any of the specified fields contain "intentra".
+func isIntentraEntry(m map[string]any, fields ...string) bool {
+	for _, f := range fields {
+		if v, ok := m[f].(string); ok && strings.Contains(v, "intentra") {
+			return true
+		}
+	}
+	return false
+}
+
+// removeIntentraFromHooks removes all intentra entries from a hooks map.
+// innerFields specifies fields to check within nested "hooks" arrays.
+// outerFields specifies fields to check on top-level items.
+func removeIntentraFromHooks(hooks map[string]any, innerFields, outerFields []string) map[string]any {
+	cleaned := make(map[string]any)
+	for eventType, hookList := range hooks {
+		list, ok := hookList.([]any)
+		if !ok {
+			continue
+		}
+		var filtered []any
+		for _, item := range list {
+			itemMap, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if innerHooks, ok := itemMap["hooks"].([]any); ok && len(innerFields) > 0 {
+				var filteredInner []any
+				for _, h := range innerHooks {
+					if hookEntry, ok := h.(map[string]any); ok {
+						if !isIntentraEntry(hookEntry, innerFields...) {
+							filteredInner = append(filteredInner, h)
+						}
+					}
+				}
+				if len(filteredInner) > 0 {
+					itemMap["hooks"] = filteredInner
+					filtered = append(filtered, itemMap)
+				}
+			} else if len(outerFields) > 0 {
+				if !isIntentraEntry(itemMap, outerFields...) {
+					filtered = append(filtered, item)
+				}
+			}
+		}
+		if len(filtered) > 0 {
+			cleaned[eventType] = filtered
+		}
+	}
+	return cleaned
 }
 
 // --- Cursor ---
@@ -300,9 +346,9 @@ func installCursor(handlerPath string) error {
 
 	if existingConfig != nil {
 		if existingHooks, ok := existingConfig["hooks"].(map[string]any); ok {
-			cleanedHooks := removeIntentraHooksFromMap(existingHooks)
+			cleanedHooks := removeIntentraFromHooks(existingHooks, nil, []string{"command", "bash"})
 			if newHooks, ok := newConfig["hooks"].(map[string]any); ok {
-				existingConfig["hooks"] = mergeHookMaps(cleanedHooks, newHooks)
+				existingConfig["hooks"] = mergeHookEntries(cleanedHooks, newHooks)
 			}
 		} else {
 			existingConfig["hooks"] = newConfig["hooks"]
@@ -342,7 +388,7 @@ func uninstallCursor() error {
 	}
 
 	if hooks, ok := config["hooks"].(map[string]any); ok {
-		cleanedHooks := removeIntentraHooksFromMap(hooks)
+		cleanedHooks := removeIntentraFromHooks(hooks, nil, []string{"command", "bash"})
 		if len(cleanedHooks) > 0 {
 			config["hooks"] = cleanedHooks
 		} else {
@@ -394,8 +440,8 @@ func installClaudeCode(handlerPath string) error {
 
 	existingHooks, _ := settings["hooks"].(map[string]any)
 	if existingHooks != nil {
-		existingHooks = removeIntentraHooks(existingHooks)
-		settings["hooks"] = mergeHooks(existingHooks, newHooksConfig)
+		existingHooks = removeIntentraFromHooks(existingHooks, []string{"command"}, []string{"command"})
+		settings["hooks"] = mergeHookEntries(existingHooks, newHooksConfig)
 	} else {
 		settings["hooks"] = newHooksConfig
 	}
@@ -410,110 +456,6 @@ func installClaudeCode(handlerPath string) error {
 	}
 
 	return nil
-}
-
-func removeIntentraHooks(hooks map[string]any) map[string]any {
-	cleaned := make(map[string]any)
-	for eventType, hookList := range hooks {
-		if list, ok := hookList.([]any); ok {
-			var filtered []any
-			for _, item := range list {
-				if itemMap, ok := item.(map[string]any); ok {
-					if innerHooks, ok := itemMap["hooks"].([]any); ok {
-						var filteredInner []any
-						for _, h := range innerHooks {
-							if hookEntry, ok := h.(map[string]any); ok {
-								if cmd, ok := hookEntry["command"].(string); ok {
-									if !strings.Contains(cmd, "intentra") {
-										filteredInner = append(filteredInner, h)
-									}
-								}
-							}
-						}
-						if len(filteredInner) > 0 {
-							itemMap["hooks"] = filteredInner
-							filtered = append(filtered, itemMap)
-						}
-					} else if cmd, ok := itemMap["command"].(string); ok {
-						if !strings.Contains(cmd, "intentra") {
-							filtered = append(filtered, item)
-						}
-					}
-				}
-			}
-			if len(filtered) > 0 {
-				cleaned[eventType] = filtered
-			}
-		}
-	}
-	return cleaned
-}
-
-func mergeHooks(existing, newHooks map[string]any) map[string]any {
-	merged := make(map[string]any)
-	for k, v := range existing {
-		merged[k] = v
-	}
-	for eventType, newList := range newHooks {
-		if existingList, ok := merged[eventType].([]any); ok {
-			if newArr, ok := newList.([]map[string]any); ok {
-				for _, item := range newArr {
-					existingList = append(existingList, item)
-				}
-				merged[eventType] = existingList
-			}
-		} else {
-			merged[eventType] = newList
-		}
-	}
-	return merged
-}
-
-func removeIntentraHooksFromMap(hooks map[string]any) map[string]any {
-	cleaned := make(map[string]any)
-	for eventType, hookList := range hooks {
-		if list, ok := hookList.([]any); ok {
-			var filtered []any
-			for _, item := range list {
-				if itemMap, ok := item.(map[string]any); ok {
-					if cmd, ok := itemMap["command"].(string); ok {
-						if !strings.Contains(cmd, "intentra") {
-							filtered = append(filtered, item)
-						}
-						continue
-					}
-					if bash, ok := itemMap["bash"].(string); ok {
-						if !strings.Contains(bash, "intentra") {
-							filtered = append(filtered, item)
-						}
-						continue
-					}
-				}
-			}
-			if len(filtered) > 0 {
-				cleaned[eventType] = filtered
-			}
-		}
-	}
-	return cleaned
-}
-
-func mergeHookMaps(existing, newHooks map[string]any) map[string]any {
-	merged := make(map[string]any)
-	for k, v := range existing {
-		merged[k] = v
-	}
-	for eventType, newList := range newHooks {
-		if existingList, ok := merged[eventType].([]any); ok {
-			if newArr, ok := newList.([]any); ok {
-				existingList = append(existingList, newArr...)
-				merged[eventType] = existingList
-			}
-		} else {
-			merged[eventType] = newList
-		}
-	}
-	return merged
 }
 
 func uninstallClaudeCode() error {
@@ -535,7 +477,7 @@ func uninstallClaudeCode() error {
 	}
 
 	if hooks, ok := settings["hooks"].(map[string]any); ok {
-		cleanedHooks := removeIntentraHooks(hooks)
+		cleanedHooks := removeIntentraFromHooks(hooks, []string{"command"}, []string{"command"})
 		if len(cleanedHooks) > 0 {
 			settings["hooks"] = cleanedHooks
 		} else {
@@ -609,8 +551,8 @@ func installGeminiCLI(handlerPath string) error {
 	}
 
 	if existingHooks, ok := settings["hooks"].(map[string]any); ok {
-		cleanedHooks := removeIntentraHooksFromGemini(existingHooks)
-		settings["hooks"] = mergeGeminiHooks(cleanedHooks, newHooks)
+		cleanedHooks := removeIntentraFromHooks(existingHooks, []string{"name", "command"}, nil)
+		settings["hooks"] = mergeHookEntries(cleanedHooks, newHooks)
 	} else {
 		settings["hooks"] = newHooks
 	}
@@ -625,64 +567,6 @@ func installGeminiCLI(handlerPath string) error {
 	}
 
 	return nil
-}
-
-func removeIntentraHooksFromGemini(hooks map[string]any) map[string]any {
-	cleaned := make(map[string]any)
-	for eventType, hookList := range hooks {
-		if list, ok := hookList.([]any); ok {
-			var filtered []any
-			for _, item := range list {
-				if itemMap, ok := item.(map[string]any); ok {
-					if innerHooks, ok := itemMap["hooks"].([]any); ok {
-						var filteredInner []any
-						for _, h := range innerHooks {
-							if hookEntry, ok := h.(map[string]any); ok {
-								isIntentra := false
-								if name, ok := hookEntry["name"].(string); ok && strings.Contains(name, "intentra") {
-									isIntentra = true
-								}
-								if cmd, ok := hookEntry["command"].(string); ok && strings.Contains(cmd, "intentra") {
-									isIntentra = true
-								}
-								if !isIntentra {
-									filteredInner = append(filteredInner, h)
-								}
-							}
-						}
-						if len(filteredInner) > 0 {
-							itemMap["hooks"] = filteredInner
-							filtered = append(filtered, itemMap)
-						}
-					}
-				}
-			}
-			if len(filtered) > 0 {
-				cleaned[eventType] = filtered
-			}
-		}
-	}
-	return cleaned
-}
-
-func mergeGeminiHooks(existing, newHooks map[string]any) map[string]any {
-	merged := make(map[string]any)
-	for k, v := range existing {
-		merged[k] = v
-	}
-	for eventType, newList := range newHooks {
-		if existingList, ok := merged[eventType].([]any); ok {
-			if newArr, ok := newList.([]map[string]any); ok {
-				for _, item := range newArr {
-					existingList = append(existingList, item)
-				}
-				merged[eventType] = existingList
-			}
-		} else {
-			merged[eventType] = newList
-		}
-	}
-	return merged
 }
 
 func uninstallGeminiCLI() error {
@@ -704,7 +588,7 @@ func uninstallGeminiCLI() error {
 	}
 
 	if hooks, ok := settings["hooks"].(map[string]any); ok {
-		cleanedHooks := removeIntentraHooksFromGemini(hooks)
+		cleanedHooks := removeIntentraFromHooks(hooks, []string{"name", "command"}, nil)
 		if len(cleanedHooks) > 0 {
 			settings["hooks"] = cleanedHooks
 		} else {
@@ -762,9 +646,9 @@ func installCopilot(handlerPath string) error {
 
 	if existingConfig != nil {
 		if existingHooks, ok := existingConfig["hooks"].(map[string]any); ok {
-			cleanedHooks := removeIntentraHooksFromCopilot(existingHooks)
+			cleanedHooks := removeIntentraFromHooks(existingHooks, nil, []string{"bash", "powershell"})
 			if newHooks, ok := newConfig["hooks"].(map[string]any); ok {
-				existingConfig["hooks"] = mergeHookMaps(cleanedHooks, newHooks)
+				existingConfig["hooks"] = mergeHookEntries(cleanedHooks, newHooks)
 			}
 		} else {
 			existingConfig["hooks"] = newConfig["hooks"]
@@ -786,33 +670,6 @@ func installCopilot(handlerPath string) error {
 	return nil
 }
 
-func removeIntentraHooksFromCopilot(hooks map[string]any) map[string]any {
-	cleaned := make(map[string]any)
-	for eventType, hookList := range hooks {
-		if list, ok := hookList.([]any); ok {
-			var filtered []any
-			for _, item := range list {
-				if itemMap, ok := item.(map[string]any); ok {
-					isIntentra := false
-					if bash, ok := itemMap["bash"].(string); ok && strings.Contains(bash, "intentra") {
-						isIntentra = true
-					}
-					if ps, ok := itemMap["powershell"].(string); ok && strings.Contains(ps, "intentra") {
-						isIntentra = true
-					}
-					if !isIntentra {
-						filtered = append(filtered, item)
-					}
-				}
-			}
-			if len(filtered) > 0 {
-				cleaned[eventType] = filtered
-			}
-		}
-	}
-	return cleaned
-}
-
 func uninstallCopilot() error {
 	home, _ := os.UserHomeDir()
 	dir, _ := getCopilotHooksDir(home)
@@ -832,7 +689,7 @@ func uninstallCopilot() error {
 	}
 
 	if hooks, ok := config["hooks"].(map[string]any); ok {
-		cleanedHooks := removeIntentraHooksFromCopilot(hooks)
+		cleanedHooks := removeIntentraFromHooks(hooks, nil, []string{"bash", "powershell"})
 		if len(cleanedHooks) > 0 {
 			config["hooks"] = cleanedHooks
 		} else {
@@ -894,9 +751,9 @@ func installWindsurf(handlerPath string) error {
 
 	if existingConfig != nil {
 		if existingHooks, ok := existingConfig["hooks"].(map[string]any); ok {
-			cleanedHooks := removeIntentraHooksFromMap(existingHooks)
+			cleanedHooks := removeIntentraFromHooks(existingHooks, nil, []string{"command", "bash"})
 			if newHooks, ok := newConfig["hooks"].(map[string]any); ok {
-				existingConfig["hooks"] = mergeHookMaps(cleanedHooks, newHooks)
+				existingConfig["hooks"] = mergeHookEntries(cleanedHooks, newHooks)
 			}
 		} else {
 			existingConfig["hooks"] = newConfig["hooks"]
@@ -936,7 +793,7 @@ func uninstallWindsurf() error {
 	}
 
 	if hooks, ok := config["hooks"].(map[string]any); ok {
-		cleanedHooks := removeIntentraHooksFromMap(hooks)
+		cleanedHooks := removeIntentraFromHooks(hooks, nil, []string{"command", "bash"})
 		if len(cleanedHooks) > 0 {
 			config["hooks"] = cleanedHooks
 		} else {
@@ -955,4 +812,3 @@ func uninstallWindsurf() error {
 
 	return os.WriteFile(hooksFile, newData, 0600)
 }
-

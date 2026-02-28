@@ -23,7 +23,10 @@ var ErrInvalidScanID = errors.New("invalid scan ID: must contain only alphanumer
 
 // LoadEvents reads all events from events.jsonl.
 func LoadEvents() ([]models.Event, error) {
-	eventsFile := config.GetEventsFile()
+	eventsFile, err := config.GetEventsFile()
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine events path: %w", err)
+	}
 
 	f, err := os.Open(eventsFile)
 	if err != nil {
@@ -73,12 +76,14 @@ func validateScanID(id string) error {
 
 // SaveScan writes a scan to the scans directory.
 func SaveScan(scan *models.Scan) error {
-	// Validate scan ID to prevent path traversal
 	if err := validateScanID(scan.ID); err != nil {
 		return err
 	}
 
-	scansDir := config.GetScansDir()
+	scansDir, err := config.GetScansDir()
+	if err != nil {
+		return fmt.Errorf("failed to determine scans path: %w", err)
+	}
 	if err := os.MkdirAll(scansDir, 0700); err != nil {
 		return err
 	}
@@ -95,7 +100,10 @@ func SaveScan(scan *models.Scan) error {
 
 // LoadScans reads all scans from the scans directory.
 func LoadScans() ([]models.Scan, error) {
-	scansDir := config.GetScansDir()
+	scansDir, err := config.GetScansDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine scans path: %w", err)
+	}
 
 	entries, err := os.ReadDir(scansDir)
 	if err != nil {
@@ -132,7 +140,10 @@ func LoadScan(id string) (*models.Scan, error) {
 		return nil, err
 	}
 
-	scansDir := config.GetScansDir()
+	scansDir, err := config.GetScansDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine scans path: %w", err)
+	}
 	filename := filepath.Join(scansDir, id+".json")
 
 	absFilename, err := filepath.Abs(filename)
@@ -167,7 +178,10 @@ func DeleteScan(id string) error {
 		return err
 	}
 
-	scansDir := config.GetScansDir()
+	scansDir, err := config.GetScansDir()
+	if err != nil {
+		return fmt.Errorf("failed to determine scans path: %w", err)
+	}
 	filename := filepath.Join(scansDir, id+".json")
 
 	absFilename, err := filepath.Abs(filename)
