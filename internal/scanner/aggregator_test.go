@@ -97,80 +97,6 @@ func TestEstimateCost_LongestPrefixWins(t *testing.T) {
 	}
 }
 
-func TestCalculateFingerprint(t *testing.T) {
-	t.Run("empty events", func(t *testing.T) {
-		if fp := calculateFingerprint(nil); fp != "" {
-			t.Errorf("expected empty, got %q", fp)
-		}
-	})
-
-	t.Run("no prompts", func(t *testing.T) {
-		events := []models.Event{{NormalizedType: "after_tool"}}
-		if fp := calculateFingerprint(events); fp != "" {
-			t.Errorf("expected empty, got %q", fp)
-		}
-	})
-
-	t.Run("deterministic", func(t *testing.T) {
-		events := []models.Event{{Prompt: "Fix the bug"}, {Prompt: "Add a test"}}
-		fp1 := calculateFingerprint(events)
-		fp2 := calculateFingerprint(events)
-		if fp1 != fp2 {
-			t.Errorf("not deterministic: %q != %q", fp1, fp2)
-		}
-		if len(fp1) != 16 {
-			t.Errorf("expected length 16, got %d", len(fp1))
-		}
-	})
-
-	t.Run("order independent", func(t *testing.T) {
-		e1 := []models.Event{{Prompt: "A"}, {Prompt: "B"}}
-		e2 := []models.Event{{Prompt: "B"}, {Prompt: "A"}}
-		if calculateFingerprint(e1) != calculateFingerprint(e2) {
-			t.Error("should be order-independent")
-		}
-	})
-}
-
-func TestCalculateFilesHash(t *testing.T) {
-	t.Run("empty", func(t *testing.T) {
-		if h := calculateFilesHash(nil); h != "" {
-			t.Errorf("expected empty, got %q", h)
-		}
-	})
-
-	t.Run("deduplicates and case-normalizes", func(t *testing.T) {
-		events := []models.Event{
-			{FilePath: "/foo/bar.go"},
-			{FilePath: "/foo/bar.go"},
-			{FilePath: "/foo/BAR.go"},
-		}
-		h := calculateFilesHash(events)
-		if len(h) != 8 {
-			t.Errorf("expected length 8, got %d", len(h))
-		}
-	})
-}
-
-func TestCalculateActionCounts(t *testing.T) {
-	events := []models.Event{
-		{NormalizedType: "after_file_edit"},
-		{NormalizedType: "after_file_edit"},
-		{NormalizedType: "after_file_read"},
-		{NormalizedType: "after_shell"},
-		{NormalizedType: "after_mcp"},
-		{NormalizedType: "after_response", Error: "something failed"},
-	}
-
-	counts := calculateActionCounts(events)
-
-	expected := map[string]int{"edits": 2, "reads": 1, "shell": 1, "mcp": 1, "failed": 1}
-	for k, want := range expected {
-		if counts[k] != want {
-			t.Errorf("%s = %d, want %d", k, counts[k], want)
-		}
-	}
-}
 
 func TestAggregateEvents_SkipsEmptyConversationID(t *testing.T) {
 	events := []models.Event{
@@ -224,13 +150,13 @@ func TestAggregateFilesModified(t *testing.T) {
 
 func TestSanitizePath(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
-		if sanitizePath("") != "" {
+		if models.SanitizePath("") != "" {
 			t.Error("expected empty for empty input")
 		}
 	})
 
 	t.Run("non-home path unchanged", func(t *testing.T) {
-		if result := sanitizePath("/tmp/foo"); result != "/tmp/foo" {
+		if result := models.SanitizePath("/tmp/foo"); result != "/tmp/foo" {
 			t.Errorf("expected /tmp/foo, got %s", result)
 		}
 	})

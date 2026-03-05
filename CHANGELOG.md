@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-03-05
+
+### Added
+- `internal/httputil` package consolidating `DefaultClient` (30s timeout) and `MaxResponseSize` (10 MB) used across auth, API, and hook packages
+- `SendScanWithJWT` and `PatchSessionEnd` exported functions on `api` package, replacing private implementations in hook handler
+- `GenerateScanID` and `SanitizePath` exported from `pkg/models` as single source of truth
+- `NormalizedEventType` constants, `IsLLMCallEvent`, and `IsToolCallEvent` promoted to `pkg/models/event.go`
+- `device.GetRawHardwareID()` for cross-package access to platform hardware identity
+- `config.InvalidateCache()` for force-reloading config from disk
+- `config.AuthModeAPIKey` constant replacing hardcoded `"api_key"` strings
+- Generic `installJSONHookFile`, `uninstallJSONHookFile`, `installSettingsHookFile`, `uninstallSettingsHookFile` helpers replacing per-tool install/uninstall boilerplate
+- JSON parse warning on corrupt hooks.json/settings.json files instead of silent overwrite
+
+### Changed
+- Config loading is now cached with mutex guard; subsequent `Load()` calls return cached result
+- `EnsureDirectories` is now idempotent via `sync.Once`-style guard
+- `SanitizePath` caches `os.UserHomeDir()` result via `sync.Once`
+- `saveAPIConfig` uses typed `config.Load`/`config.SaveConfig` instead of raw YAML marshaling
+- `cleanupStaleBuffers` moved from `ProcessEventWithEvent` to `handleStopEvent` (runs only when flushing)
+- `deriveSessionKey` simplified: removed redundant nested `os.Stat` call
+- `redactContent` and sanitize helpers use `strconv.Itoa` instead of `fmt.Sprintf` for lower allocation
+- `AnyHooksInstalled` short-circuits on first installed tool instead of checking all
+- `applyEnvOverrides` extracted as a method on `Config`, shared by `Load` and `LoadWithFile`
+- `addAuth` reuses pre-loaded credentials via new `addJWTAuthWithCreds` to avoid double credential loading
+- Scanner aggregator delegates to `models.IsLLMCallEvent`/`IsToolCallEvent` instead of local map lookups
+
+### Removed
+- Per-tool normalizer files (`normalizer_claude.go`, `normalizer_cursor.go`, `normalizer_gemini.go`, `normalizer_copilot.go`, `normalizer_windsurf.go`) consolidated into single `toolMappings` table
+- Duplicate `getMachineID` in `internal/auth/encryption.go` (now uses `device.GetRawHardwareID`)
+- Duplicate `sanitizePath` implementations in handler and aggregator (now `models.SanitizePath`)
+- Duplicate `syncScanWithJWT` and `patchSessionEnd` in handler (now `api.SendScanWithJWT` / `api.PatchSessionEnd`)
+- `hookHTTPClient`, `maxResponseSize` from handler; `maxResponseSize` from API client; `HTTPClient`, `MaxResponseSize` from auth (all consolidated in `httputil`)
+- `loadFromEncryptedCache` wrapper that only delegated to `ReadEncryptedCache`
+- `calculateFingerprint`, `calculateFilesHash`, `calculateActionCounts` from aggregator and their tests (computed server-side)
+
 ## [0.12.0] - 2026-02-27
 
 ### Added
@@ -410,6 +445,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.13.0]: https://github.com/atbabers/intentra-cli/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/atbabers/intentra-cli/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/atbabers/intentra-cli/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/atbabers/intentra-cli/compare/v0.9.1...v0.10.0

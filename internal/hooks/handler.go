@@ -13,11 +13,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,11 +31,8 @@ import (
 )
 
 const (
-	maxBufferAge    = 30 * time.Minute
-	maxResponseSize = 10 * 1024 * 1024 // 10 MB
+	maxBufferAge = 30 * time.Minute
 )
-
-var hookHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 const cleanupMarkerFile = "intentra_cleanup_marker"
 
@@ -224,7 +221,7 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 			model = "claude-sonnet-4.5"
 		}
 	}
-	scan.EstimatedCost = scanner.EstimateCost(scan.TotalTokens, model)
+	scan.EstimatedCost = scanner.EstimateCost(scan.TotalTokens, model, tool)
 
 	scan.MCPToolUsage = aggregateMCPToolUsage(events, scan.EstimatedCost)
 
@@ -261,8 +258,7 @@ func initScan(events []bufferedEvent, tool string) *models.Scan {
 		scan.ConversationID = first.Event.SessionID
 	}
 
-	hash := sha256.Sum256([]byte(scan.ConversationID + scan.StartTime.String()))
-	scan.ID = "scan_" + hex.EncodeToString(hash[:])[:12]
+	scan.ID = models.GenerateScanID(scan.ConversationID, scan.StartTime)
 
 	scan.Source = &models.ScanSource{
 		Tool:      tool,
@@ -320,6 +316,19 @@ func detectFirstString(events []bufferedEvent, extract func(*models.Event) strin
 	return ""
 }
 
+// extractInt64 extracts an int64 from a map value that may be float64 or json.Number.
+func extractInt64(raw map[string]any, key string) int64 {
+	switch v := raw[key].(type) {
+	case float64:
+		return int64(v)
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
 func extractSessionEndMetadata(scan *models.Scan, tool string, events []bufferedEvent) {
 	if tool != "copilot" && tool != "gemini" {
 		return
@@ -330,14 +339,7 @@ func extractSessionEndMetadata(scan *models.Scan, tool string, events []buffered
 			if reason, ok := entry.RawEvent["reason"].(string); ok && reason != "" {
 				scan.SessionEndReason = reason
 			}
-			switch v := entry.RawEvent["duration_ms"].(type) {
-			case float64:
-				scan.SessionDurationMs = int64(v)
-			case json.Number:
-				if n, err := v.Int64(); err == nil {
-					scan.SessionDurationMs = n
-				}
-			}
+			scan.SessionDurationMs = extractInt64(entry.RawEvent, "duration_ms")
 			break
 		}
 	}
@@ -607,22 +609,7 @@ func redactContent(value string) string {
 	if value == "" {
 		return value
 	}
-	return fmt.Sprintf("[redacted: %d chars]", len(value))
-}
-
-// sanitizePath replaces the home directory prefix with ~ to avoid storing absolute paths.
-func sanitizePath(path string) string {
-	if path == "" {
-		return path
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return path
-	}
-	if strings.HasPrefix(path, home) {
-		return "~" + path[len(home):]
-	}
-	return path
+	return "[redacted: " + strconv.Itoa(len(value)) + " chars]"
 }
 
 // sanitizeEvent redacts sensitive content fields on an event in place.
@@ -634,12 +621,12 @@ func sanitizeEvent(event *models.Event) {
 	event.Command = redactContent(event.Command)
 	event.CommandOutput = redactContent(event.CommandOutput)
 	if len(event.ToolInput) > 0 {
-		event.ToolInput = json.RawMessage(fmt.Sprintf("[redacted: %d chars]", len(event.ToolInput)))
+		event.ToolInput = json.RawMessage("[redacted: " + strconv.Itoa(len(event.ToolInput)) + " chars]")
 	}
 	if len(event.ToolOutput) > 0 {
-		event.ToolOutput = json.RawMessage(fmt.Sprintf("[redacted: %d chars]", len(event.ToolOutput)))
+		event.ToolOutput = json.RawMessage("[redacted: " + strconv.Itoa(len(event.ToolOutput)) + " chars]")
 	}
-	event.FilePath = sanitizePath(event.FilePath)
+	event.FilePath = models.SanitizePath(event.FilePath)
 }
 
 // extractCompactionMetadata populates compaction-specific fields for pre_compact events.
@@ -895,8 +882,6 @@ func extractHostFromURL(rawURL string) string {
 
 // ProcessEventWithEvent buffers events and sends aggregated scan on stop events.
 func ProcessEventWithEvent(reader io.Reader, cfg *config.Config, tool, eventType string) error {
-	cleanupStaleBuffers()
-
 	bufScanner := bufio.NewScanner(reader)
 	bufScanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
 	if !bufScanner.Scan() {
@@ -957,16 +942,13 @@ func deriveSessionKey(event *models.Event, tool string) (string, string) {
 	if tool == "claude" {
 		cursorKey := "cursor_" + baseKey
 		cursorBufferPath := getBufferPath(cursorKey)
-		if _, err := os.Stat(cursorBufferPath); err == nil {
-			// Check buffer age to avoid merging stale sessions
-			if info, statErr := os.Stat(cursorBufferPath); statErr == nil {
-				if time.Since(info.ModTime()) < 30*time.Minute {
-					debug.Log("Claude event has matching active Cursor session, treating as Cursor")
-					sessionKey = cursorKey
-					tool = "cursor"
-				} else {
-					debug.Log("Claude event has matching but stale Cursor session, keeping separate")
-				}
+		if info, err := os.Stat(cursorBufferPath); err == nil {
+			if time.Since(info.ModTime()) < 30*time.Minute {
+				debug.Log("Claude event has matching active Cursor session, treating as Cursor")
+				sessionKey = cursorKey
+				tool = "cursor"
+			} else {
+				debug.Log("Claude event has matching but stale Cursor session, keeping separate")
 			}
 		}
 	}
@@ -975,6 +957,8 @@ func deriveSessionKey(event *models.Event, tool string) (string, string) {
 }
 
 func handleStopEvent(sessionKey, tool string, event *models.Event, rawMap map[string]any, cfg *config.Config) error {
+	cleanupStaleBuffers()
+
 	if err := appendToBuffer(sessionKey, event, rawMap); err != nil {
 		return fmt.Errorf("failed to buffer event: %w", err)
 	}
@@ -1000,7 +984,7 @@ func handleStopEvent(sessionKey, tool string, event *models.Event, rawMap map[st
 		debug.Warn("credential check failed: %v", credErr)
 	}
 	if creds != nil {
-		if err := syncScanWithJWT(scan, creds.AccessToken); err != nil {
+		if err := api.SendScanWithJWT(scan, creds.AccessToken); err != nil {
 			debug.Warn("failed to sync to api.intentra.sh: %v", err)
 		} else {
 			debug.Log("Synced to https://api.intentra.sh")
@@ -1055,17 +1039,10 @@ func handleSessionEndEvent(sessionKey string, rawMap map[string]any) error {
 		if r, ok := rawMap["reason"].(string); ok {
 			reason = r
 		}
-		switch v := rawMap["duration_ms"].(type) {
-		case float64:
-			durationMs = int64(v)
-		case json.Number:
-			if n, err := v.Int64(); err == nil {
-				durationMs = n
-			}
-		}
+		durationMs = extractInt64(rawMap, "duration_ms")
 	}
 
-	if err := patchSessionEnd(lastScanID, creds.AccessToken, reason, durationMs); err != nil {
+	if err := api.PatchSessionEnd(lastScanID, creds.AccessToken, reason, durationMs); err != nil {
 		debug.Warn("failed to PATCH session end: %v", err)
 	} else {
 		debug.Log("PATCHed session end for scan %s", lastScanID)
@@ -1087,91 +1064,3 @@ func RunHookHandlerWithToolAndEvent(tool, event string) error {
 	return ProcessEventWithEvent(os.Stdin, cfg, tool, event)
 }
 
-// syncScanWithJWT sends a scan to the default API endpoint using JWT auth.
-func syncScanWithJWT(scan *models.Scan, accessToken string) error {
-	deviceID, err := device.GetDeviceID()
-	if err != nil {
-		return fmt.Errorf("failed to get device ID: %w", err)
-	}
-
-	jsonBody, err := json.Marshal(scan.BuildAPIPayload(deviceID))
-	if err != nil {
-		return fmt.Errorf("failed to marshal scan: %w", err)
-	}
-
-	url := config.DefaultAPIEndpoint + "/scans"
-	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", api.UserAgent)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("X-Machine-ID", deviceID)
-
-	resp, err := hookHTTPClient.Do(req)
-	if err != nil {
-		debug.LogHTTP("POST", url, 0)
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	debug.LogHTTP("POST", url, resp.StatusCode)
-
-	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-		return fmt.Errorf("API returned %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	return nil
-}
-
-func patchSessionEnd(scanID, accessToken, reason string, durationMs int64) error {
-	deviceID, err := device.GetDeviceID()
-	if err != nil {
-		return fmt.Errorf("failed to get device ID: %w", err)
-	}
-
-	body := map[string]any{}
-	if reason != "" {
-		body["session_end_reason"] = reason
-	}
-	if durationMs > 0 {
-		body["session_duration_ms"] = durationMs
-	}
-
-	if len(body) == 0 {
-		return nil
-	}
-
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("failed to marshal session end body: %w", err)
-	}
-
-	patchURL := config.DefaultAPIEndpoint + "/scans/" + url.PathEscape(scanID) + "/session"
-	req, err := http.NewRequest("PATCH", patchURL, bytes.NewReader(jsonBody))
-	if err != nil {
-		return fmt.Errorf("failed to create PATCH request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", api.UserAgent)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("X-Machine-ID", deviceID)
-
-	resp, err := hookHTTPClient.Do(req)
-	if err != nil {
-		debug.LogHTTP("PATCH", patchURL, 0)
-		return fmt.Errorf("PATCH request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	debug.LogHTTP("PATCH", patchURL, resp.StatusCode)
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
-		return fmt.Errorf("PATCH returned %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	return nil
-}

@@ -52,3 +52,4 @@ package.json
 
 # Local build config
 Makefile
+.gitnexus

@@ -11,7 +11,7 @@ func TestProcessEvent_ParsesEvent(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Server.Enabled = true
 	cfg.Server.Endpoint = "http://localhost:9999/v1"
-	cfg.Server.Auth.Mode = "api_key"
+	cfg.Server.Auth.Mode = config.AuthModeAPIKey
 	cfg.Server.Auth.APIKey.KeyID = "test-key"
 	cfg.Server.Auth.APIKey.Secret = "test-secret"
 

@@ -109,6 +109,68 @@ func ParseMCPDoubleUnderscoreName(toolName string) (serverName, mcpToolName stri
 	return rest[:idx], rest[idx+2:], true
 }
 
+// NormalizedEventType represents a unified event type across all AI coding tools.
+type NormalizedEventType string
+
+const (
+	EventSessionStart NormalizedEventType = "session_start"
+	EventSessionEnd   NormalizedEventType = "session_end"
+
+	EventBeforePrompt  NormalizedEventType = "before_prompt"
+	EventAfterResponse NormalizedEventType = "after_response"
+	EventAgentThought  NormalizedEventType = "agent_thought"
+
+	EventBeforeTool NormalizedEventType = "before_tool"
+	EventAfterTool  NormalizedEventType = "after_tool"
+
+	EventBeforeFileRead NormalizedEventType = "before_file_read"
+	EventAfterFileRead  NormalizedEventType = "after_file_read"
+	EventBeforeFileEdit NormalizedEventType = "before_file_edit"
+	EventAfterFileEdit  NormalizedEventType = "after_file_edit"
+
+	EventBeforeShell NormalizedEventType = "before_shell"
+	EventAfterShell  NormalizedEventType = "after_shell"
+
+	EventBeforeMCP NormalizedEventType = "before_mcp"
+	EventAfterMCP  NormalizedEventType = "after_mcp"
+
+	EventBeforeModel NormalizedEventType = "before_model"
+	EventAfterModel  NormalizedEventType = "after_model"
+
+	EventToolSelection     NormalizedEventType = "tool_selection"
+	EventPermissionRequest NormalizedEventType = "permission_request"
+	EventNotification      NormalizedEventType = "notification"
+	EventStop              NormalizedEventType = "stop"
+	EventSubagentStart     NormalizedEventType = "subagent_start"
+	EventSubagentStop      NormalizedEventType = "subagent_stop"
+	EventPreCompact        NormalizedEventType = "pre_compact"
+	EventError             NormalizedEventType = "error"
+	EventToolUseFailure    NormalizedEventType = "tool_use_failure"
+	EventWorktreeSetup     NormalizedEventType = "worktree_setup"
+	EventUnknown           NormalizedEventType = "unknown"
+)
+
+// IsLLMCallEvent returns true if the event represents an LLM call.
+func IsLLMCallEvent(eventType NormalizedEventType) bool {
+	return eventType == EventAfterResponse ||
+		eventType == EventAfterTool ||
+		eventType == EventAfterFileEdit ||
+		eventType == EventAfterFileRead ||
+		eventType == EventAfterShell ||
+		eventType == EventAfterMCP ||
+		eventType == EventAfterModel ||
+		eventType == EventAgentThought
+}
+
+// IsToolCallEvent returns true if the event represents a tool execution.
+func IsToolCallEvent(eventType NormalizedEventType) bool {
+	return eventType == EventAfterTool ||
+		eventType == EventAfterFileEdit ||
+		eventType == EventAfterFileRead ||
+		eventType == EventAfterShell ||
+		eventType == EventAfterMCP
+}
+
 // MCPServerURLHash returns a short hash of the sanitized server URL or command.
 // Used as a deduplication key alongside server name.
 func MCPServerURLHash(serverURL, serverCmd string) string {

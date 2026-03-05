@@ -13,13 +13,8 @@ import (
 	"time"
 
 	"github.com/atbabers/intentra-cli/internal/config"
+	"github.com/atbabers/intentra-cli/internal/httputil"
 )
-
-// MaxResponseSize is the maximum allowed HTTP response body size (10 MB).
-const MaxResponseSize = 10 * 1024 * 1024
-
-// HTTPClient is the shared HTTP client for auth operations (30s timeout).
-var HTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // Credentials represents stored authentication credentials.
 type Credentials struct {
@@ -167,13 +162,13 @@ func doRefreshHTTP(creds *Credentials) (*Credentials, error) {
 	}
 	payloadBytes, _ := json.Marshal(payload)
 
-	resp, err := HTTPClient.Post(url, "application/json", bytes.NewReader(payloadBytes))
+	resp, err := httputil.DefaultClient.Post(url, "application/json", bytes.NewReader(payloadBytes))
 	if err != nil {
 		return nil, fmt.Errorf("refresh request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, httputil.MaxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}

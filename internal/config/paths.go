@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 )
 
 // GetConfigDir returns the OS-appropriate config directory.
@@ -76,8 +77,21 @@ func GetConfigPath() (string, error) {
 	return filepath.Join(dir, "config.yaml"), nil
 }
 
+var (
+	ensureDirsMu   sync.Mutex
+	ensureDirsDone bool
+)
+
 // EnsureDirectories creates all required directories.
+// It is safe to call multiple times; actual directory creation happens only once.
+// On failure, subsequent calls will retry.
 func EnsureDirectories() error {
+	ensureDirsMu.Lock()
+	defer ensureDirsMu.Unlock()
+	if ensureDirsDone {
+		return nil
+	}
+
 	configDir, err := GetConfigDir()
 	if err != nil {
 		return err
@@ -103,5 +117,7 @@ func EnsureDirectories() error {
 			return err
 		}
 	}
+
+	ensureDirsDone = true
 	return nil
 }

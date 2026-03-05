@@ -190,9 +190,11 @@ func Status() []ToolStatus {
 }
 
 // AnyHooksInstalled returns true if hooks are installed for any tool.
+// Short-circuits on first match instead of checking all tools.
 func AnyHooksInstalled() bool {
-	for _, status := range Status() {
-		if status.Installed {
+	for _, tool := range AllTools() {
+		installed, _, _ := checkStatus(tool)
+		if installed {
 			return true
 		}
 	}
@@ -308,15 +310,13 @@ func removeIntentraFromHooks(hooks map[string]any, innerFields, outerFields []st
 	return cleaned
 }
 
-// --- Cursor ---
+// --- Generic install/uninstall helpers ---
 
-func installCursor(handlerPath string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	dir, err := getCursorHooksDir(home)
+// installJSONHookFile installs hooks for tools that use a top-level hooks.json file
+// (Cursor, Copilot, Windsurf). It reads any existing config, removes old intentra entries,
+// merges in newly generated hooks, and writes the result.
+func installJSONHookFile(tool Tool, handlerPath string, generator func(string) (string, error), cleanInner, cleanOuter, preserveFields []string) error {
+	dir, err := GetHooksDir(tool)
 	if err != nil {
 		return fmt.Errorf("failed to get hooks directory: %w", err)
 	}
@@ -329,12 +329,12 @@ func installCursor(handlerPath string) error {
 
 	var existingConfig map[string]any
 	if data, err := os.ReadFile(hooksFile); err == nil {
-		if err := json.Unmarshal(data, &existingConfig); err != nil {
-			existingConfig = nil
+		if jsonErr := json.Unmarshal(data, &existingConfig); jsonErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %s contains invalid JSON, it will be overwritten: %v\n", hooksFile, jsonErr)
 		}
 	}
 
-	newHooksJSON, err := GenerateCursorHooksJSON(handlerPath)
+	newHooksJSON, err := generator(handlerPath)
 	if err != nil {
 		return fmt.Errorf("invalid handler path: %w", err)
 	}
@@ -346,12 +346,17 @@ func installCursor(handlerPath string) error {
 
 	if existingConfig != nil {
 		if existingHooks, ok := existingConfig["hooks"].(map[string]any); ok {
-			cleanedHooks := removeIntentraFromHooks(existingHooks, nil, []string{"command", "bash"})
+			cleanedHooks := removeIntentraFromHooks(existingHooks, cleanInner, cleanOuter)
 			if newHooks, ok := newConfig["hooks"].(map[string]any); ok {
 				existingConfig["hooks"] = mergeHookEntries(cleanedHooks, newHooks)
 			}
 		} else {
 			existingConfig["hooks"] = newConfig["hooks"]
+		}
+		for _, field := range preserveFields {
+			if v, ok := newConfig[field]; ok {
+				existingConfig[field] = v
+			}
 		}
 	} else {
 		existingConfig = newConfig
@@ -362,16 +367,17 @@ func installCursor(handlerPath string) error {
 		return fmt.Errorf("failed to marshal hooks: %w", err)
 	}
 
-	if err := os.WriteFile(hooksFile, data, 0600); err != nil {
-		return fmt.Errorf("failed to write hooks.json: %w", err)
-	}
-
-	return nil
+	return os.WriteFile(hooksFile, data, 0600)
 }
 
-func uninstallCursor() error {
-	home, _ := os.UserHomeDir()
-	dir, _ := getCursorHooksDir(home)
+// uninstallJSONHookFile removes intentra hooks from a hooks.json file.
+// If no other hooks remain, the file is deleted entirely.
+func uninstallJSONHookFile(tool Tool, cleanInner, cleanOuter []string) error {
+	dir, err := GetHooksDir(tool)
+	if err != nil {
+		return fmt.Errorf("failed to get hooks directory: %w", err)
+	}
+
 	hooksFile := filepath.Join(dir, "hooks.json")
 
 	data, err := os.ReadFile(hooksFile)
@@ -388,7 +394,7 @@ func uninstallCursor() error {
 	}
 
 	if hooks, ok := config["hooks"].(map[string]any); ok {
-		cleanedHooks := removeIntentraFromHooks(hooks, nil, []string{"command", "bash"})
+		cleanedHooks := removeIntentraFromHooks(hooks, cleanInner, cleanOuter)
 		if len(cleanedHooks) > 0 {
 			config["hooks"] = cleanedHooks
 		} else {
@@ -408,40 +414,38 @@ func uninstallCursor() error {
 	return os.WriteFile(hooksFile, newData, 0600)
 }
 
-// --- Claude Code ---
-
-func installClaudeCode(handlerPath string) error {
-	home, err := os.UserHomeDir()
+// installSettingsHookFile installs hooks for tools that use settings.json with a nested
+// "hooks" key (Claude Code, Gemini CLI).
+func installSettingsHookFile(tool Tool, handlerPath string, generator func(string) (map[string]any, error), cleanInner, cleanOuter []string) error {
+	dir, err := GetHooksDir(tool)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get hooks directory: %w", err)
 	}
-	dir, _ := getClaudeCodeDir(home)
 
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("failed to create .claude directory: %w", err)
+		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
 	settingsFile := filepath.Join(dir, "settings.json")
 
 	var settings map[string]any
 	if data, err := os.ReadFile(settingsFile); err == nil {
-		if err := json.Unmarshal(data, &settings); err != nil {
-			settings = nil
+		if jsonErr := json.Unmarshal(data, &settings); jsonErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %s contains invalid JSON, it will be overwritten: %v\n", settingsFile, jsonErr)
 		}
 	}
 	if settings == nil {
 		settings = make(map[string]any)
 	}
 
-	newHooksConfig, err := GenerateClaudeCodeHooks(handlerPath)
+	newHooksConfig, err := generator(handlerPath)
 	if err != nil {
 		return fmt.Errorf("invalid handler path: %w", err)
 	}
 
-	existingHooks, _ := settings["hooks"].(map[string]any)
-	if existingHooks != nil {
-		existingHooks = removeIntentraFromHooks(existingHooks, []string{"command"}, []string{"command"})
-		settings["hooks"] = mergeHookEntries(existingHooks, newHooksConfig)
+	if existingHooks, ok := settings["hooks"].(map[string]any); ok {
+		cleanedHooks := removeIntentraFromHooks(existingHooks, cleanInner, cleanOuter)
+		settings["hooks"] = mergeHookEntries(cleanedHooks, newHooksConfig)
 	} else {
 		settings["hooks"] = newHooksConfig
 	}
@@ -451,16 +455,16 @@ func installClaudeCode(handlerPath string) error {
 		return fmt.Errorf("failed to marshal settings: %w", err)
 	}
 
-	if err := os.WriteFile(settingsFile, data, 0600); err != nil {
-		return fmt.Errorf("failed to write settings.json: %w", err)
-	}
-
-	return nil
+	return os.WriteFile(settingsFile, data, 0600)
 }
 
-func uninstallClaudeCode() error {
-	home, _ := os.UserHomeDir()
-	dir, _ := getClaudeCodeDir(home)
+// uninstallSettingsHookFile removes intentra hooks from a settings.json file.
+func uninstallSettingsHookFile(tool Tool, cleanInner, cleanOuter []string) error {
+	dir, err := GetHooksDir(tool)
+	if err != nil {
+		return fmt.Errorf("failed to get hooks directory: %w", err)
+	}
+
 	settingsFile := filepath.Join(dir, "settings.json")
 
 	data, err := os.ReadFile(settingsFile)
@@ -477,7 +481,7 @@ func uninstallClaudeCode() error {
 	}
 
 	if hooks, ok := settings["hooks"].(map[string]any); ok {
-		cleanedHooks := removeIntentraFromHooks(hooks, []string{"command"}, []string{"command"})
+		cleanedHooks := removeIntentraFromHooks(hooks, cleanInner, cleanOuter)
 		if len(cleanedHooks) > 0 {
 			settings["hooks"] = cleanedHooks
 		} else {
@@ -493,37 +497,54 @@ func uninstallClaudeCode() error {
 	return os.WriteFile(settingsFile, newData, 0600)
 }
 
-// --- Gemini CLI ---
+// --- Tool-specific wrappers ---
+
+func installCursor(handlerPath string) error {
+	return installJSONHookFile(ToolCursor, handlerPath, GenerateCursorHooksJSON, nil, []string{"command", "bash"}, nil)
+}
+
+func uninstallCursor() error {
+	return uninstallJSONHookFile(ToolCursor, nil, []string{"command", "bash"})
+}
+
+func installClaudeCode(handlerPath string) error {
+	return installSettingsHookFile(ToolClaudeCode, handlerPath, GenerateClaudeCodeHooks, []string{"command"}, []string{"command"})
+}
+
+func uninstallClaudeCode() error {
+	return uninstallSettingsHookFile(ToolClaudeCode, []string{"command"}, []string{"command"})
+}
 
 func installGeminiCLI(handlerPath string) error {
+	return installSettingsHookFile(ToolGeminiCLI, handlerPath, generateGeminiHooks, []string{"name", "command"}, nil)
+}
+
+func uninstallGeminiCLI() error {
+	return uninstallSettingsHookFile(ToolGeminiCLI, []string{"name", "command"}, nil)
+}
+
+func installCopilot(handlerPath string) error {
+	return installJSONHookFile(ToolCopilot, handlerPath, GenerateCopilotHooksJSON, nil, []string{"bash", "powershell"}, []string{"version"})
+}
+
+func uninstallCopilot() error {
+	return uninstallJSONHookFile(ToolCopilot, nil, []string{"bash", "powershell"})
+}
+
+func installWindsurf(handlerPath string) error {
+	return installJSONHookFile(ToolWindsurf, handlerPath, GenerateWindsurfHooksJSON, nil, []string{"command", "bash"}, nil)
+}
+
+func uninstallWindsurf() error {
+	return uninstallJSONHookFile(ToolWindsurf, nil, []string{"command", "bash"})
+}
+
+// generateGeminiHooks creates the Gemini CLI hooks configuration.
+func generateGeminiHooks(handlerPath string) (map[string]any, error) {
 	if err := validateHandlerPath(handlerPath); err != nil {
-		return fmt.Errorf("invalid handler path: %w", err)
+		return nil, err
 	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	dir, _ := getGeminiCLIDir(home)
-
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("failed to create .gemini directory: %w", err)
-	}
-
-	settingsFile := filepath.Join(dir, "settings.json")
-
-	var settings map[string]any
-	if data, err := os.ReadFile(settingsFile); err == nil {
-		if err := json.Unmarshal(data, &settings); err != nil {
-			settings = nil
-		}
-	}
-	if settings == nil {
-		settings = make(map[string]any)
-	}
-
 	quotedPath := quotePathForShell(handlerPath)
-
 	geminiEvents := []string{
 		"SessionStart", "SessionEnd",
 		"BeforeAgent", "AfterAgent",
@@ -532,10 +553,9 @@ func installGeminiCLI(handlerPath string) error {
 		"BeforeTool", "AfterTool",
 		"PreCompress", "Notification",
 	}
-
-	newHooks := make(map[string]any)
+	hooks := make(map[string]any)
 	for _, event := range geminiEvents {
-		newHooks[event] = []map[string]any{
+		hooks[event] = []map[string]any{
 			{
 				"matcher": ".*",
 				"hooks": []map[string]any{
@@ -549,266 +569,5 @@ func installGeminiCLI(handlerPath string) error {
 			},
 		}
 	}
-
-	if existingHooks, ok := settings["hooks"].(map[string]any); ok {
-		cleanedHooks := removeIntentraFromHooks(existingHooks, []string{"name", "command"}, nil)
-		settings["hooks"] = mergeHookEntries(cleanedHooks, newHooks)
-	} else {
-		settings["hooks"] = newHooks
-	}
-
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal settings: %w", err)
-	}
-
-	if err := os.WriteFile(settingsFile, data, 0600); err != nil {
-		return fmt.Errorf("failed to write settings.json: %w", err)
-	}
-
-	return nil
-}
-
-func uninstallGeminiCLI() error {
-	home, _ := os.UserHomeDir()
-	dir, _ := getGeminiCLIDir(home)
-	settingsFile := filepath.Join(dir, "settings.json")
-
-	data, err := os.ReadFile(settingsFile)
-	if os.IsNotExist(err) {
-		return fmt.Errorf("no settings.json found at %s", dir)
-	}
-	if err != nil {
-		return err
-	}
-
-	var settings map[string]any
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return err
-	}
-
-	if hooks, ok := settings["hooks"].(map[string]any); ok {
-		cleanedHooks := removeIntentraFromHooks(hooks, []string{"name", "command"}, nil)
-		if len(cleanedHooks) > 0 {
-			settings["hooks"] = cleanedHooks
-		} else {
-			delete(settings, "hooks")
-		}
-	}
-
-	newData, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(settingsFile, newData, 0600)
-}
-
-// --- GitHub Copilot ---
-
-func installCopilot(handlerPath string) error {
-	if err := validateHandlerPath(handlerPath); err != nil {
-		return fmt.Errorf("invalid handler path: %w", err)
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	dir, err := getCopilotHooksDir(home)
-	if err != nil {
-		return fmt.Errorf("failed to get hooks directory: %w", err)
-	}
-
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("failed to create hooks directory: %w", err)
-	}
-
-	hooksFile := filepath.Join(dir, "hooks.json")
-
-	var existingConfig map[string]any
-	if data, err := os.ReadFile(hooksFile); err == nil {
-		if err := json.Unmarshal(data, &existingConfig); err != nil {
-			existingConfig = nil
-		}
-	}
-
-	newHooksJSON, err := GenerateCopilotHooksJSON(handlerPath)
-	if err != nil {
-		return fmt.Errorf("failed to generate hooks config: %w", err)
-	}
-
-	var newConfig map[string]any
-	if err := json.Unmarshal([]byte(newHooksJSON), &newConfig); err != nil {
-		return fmt.Errorf("failed to parse generated hooks config: %w", err)
-	}
-
-	if existingConfig != nil {
-		if existingHooks, ok := existingConfig["hooks"].(map[string]any); ok {
-			cleanedHooks := removeIntentraFromHooks(existingHooks, nil, []string{"bash", "powershell"})
-			if newHooks, ok := newConfig["hooks"].(map[string]any); ok {
-				existingConfig["hooks"] = mergeHookEntries(cleanedHooks, newHooks)
-			}
-		} else {
-			existingConfig["hooks"] = newConfig["hooks"]
-		}
-		existingConfig["version"] = newConfig["version"]
-	} else {
-		existingConfig = newConfig
-	}
-
-	data, err := json.MarshalIndent(existingConfig, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal hooks: %w", err)
-	}
-
-	if err := os.WriteFile(hooksFile, data, 0600); err != nil {
-		return fmt.Errorf("failed to write hooks.json: %w", err)
-	}
-
-	return nil
-}
-
-func uninstallCopilot() error {
-	home, _ := os.UserHomeDir()
-	dir, _ := getCopilotHooksDir(home)
-	hooksFile := filepath.Join(dir, "hooks.json")
-
-	data, err := os.ReadFile(hooksFile)
-	if os.IsNotExist(err) {
-		return fmt.Errorf("no hooks.json found at %s", dir)
-	}
-	if err != nil {
-		return err
-	}
-
-	var config map[string]any
-	if err := json.Unmarshal(data, &config); err != nil {
-		return err
-	}
-
-	if hooks, ok := config["hooks"].(map[string]any); ok {
-		cleanedHooks := removeIntentraFromHooks(hooks, nil, []string{"bash", "powershell"})
-		if len(cleanedHooks) > 0 {
-			config["hooks"] = cleanedHooks
-		} else {
-			delete(config, "hooks")
-		}
-	}
-
-	if hooks, ok := config["hooks"].(map[string]any); !ok || len(hooks) == 0 {
-		return os.Remove(hooksFile)
-	}
-
-	newData, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(hooksFile, newData, 0600)
-}
-
-// --- Windsurf Cascade ---
-
-func installWindsurf(handlerPath string) error {
-	if err := validateHandlerPath(handlerPath); err != nil {
-		return fmt.Errorf("invalid handler path: %w", err)
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	dir, err := getWindsurfHooksDir(home)
-	if err != nil {
-		return fmt.Errorf("failed to get hooks directory: %w", err)
-	}
-
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("failed to create hooks directory: %w", err)
-	}
-
-	hooksFile := filepath.Join(dir, "hooks.json")
-
-	var existingConfig map[string]any
-	if data, err := os.ReadFile(hooksFile); err == nil {
-		if err := json.Unmarshal(data, &existingConfig); err != nil {
-			existingConfig = nil
-		}
-	}
-
-	newHooksJSON, err := GenerateWindsurfHooksJSON(handlerPath)
-	if err != nil {
-		return fmt.Errorf("failed to generate hooks config: %w", err)
-	}
-
-	var newConfig map[string]any
-	if err := json.Unmarshal([]byte(newHooksJSON), &newConfig); err != nil {
-		return fmt.Errorf("failed to parse generated hooks config: %w", err)
-	}
-
-	if existingConfig != nil {
-		if existingHooks, ok := existingConfig["hooks"].(map[string]any); ok {
-			cleanedHooks := removeIntentraFromHooks(existingHooks, nil, []string{"command", "bash"})
-			if newHooks, ok := newConfig["hooks"].(map[string]any); ok {
-				existingConfig["hooks"] = mergeHookEntries(cleanedHooks, newHooks)
-			}
-		} else {
-			existingConfig["hooks"] = newConfig["hooks"]
-		}
-	} else {
-		existingConfig = newConfig
-	}
-
-	data, err := json.MarshalIndent(existingConfig, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal hooks: %w", err)
-	}
-
-	if err := os.WriteFile(hooksFile, data, 0600); err != nil {
-		return fmt.Errorf("failed to write hooks.json: %w", err)
-	}
-
-	return nil
-}
-
-func uninstallWindsurf() error {
-	home, _ := os.UserHomeDir()
-	dir, _ := getWindsurfHooksDir(home)
-	hooksFile := filepath.Join(dir, "hooks.json")
-
-	data, err := os.ReadFile(hooksFile)
-	if os.IsNotExist(err) {
-		return fmt.Errorf("no hooks.json found at %s", dir)
-	}
-	if err != nil {
-		return err
-	}
-
-	var config map[string]any
-	if err := json.Unmarshal(data, &config); err != nil {
-		return err
-	}
-
-	if hooks, ok := config["hooks"].(map[string]any); ok {
-		cleanedHooks := removeIntentraFromHooks(hooks, nil, []string{"command", "bash"})
-		if len(cleanedHooks) > 0 {
-			config["hooks"] = cleanedHooks
-		} else {
-			delete(config, "hooks")
-		}
-	}
-
-	if hooks, ok := config["hooks"].(map[string]any); !ok || len(hooks) == 0 {
-		return os.Remove(hooksFile)
-	}
-
-	newData, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(hooksFile, newData, 0600)
+	return hooks, nil
 }

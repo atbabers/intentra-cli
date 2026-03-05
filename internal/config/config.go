@@ -8,13 +8,24 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/viper"
 )
 
+var (
+	configMu     sync.Mutex
+	configLoaded bool
+	cachedConfig *Config
+	cachedErr    error
+)
+
 // DefaultAPIEndpoint is the default Intentra API server endpoint.
 const DefaultAPIEndpoint = "https://api.intentra.sh"
+
+// AuthModeAPIKey is the config value for API key authentication.
+const AuthModeAPIKey = "api_key"
 
 // Config represents the intentra configuration.
 type Config struct {
@@ -132,7 +143,27 @@ func DefaultConfig() *Config {
 }
 
 // Load reads configuration from file and environment.
+// Results are cached; call InvalidateCache to force re-read from disk.
 func Load() (*Config, error) {
+	configMu.Lock()
+	defer configMu.Unlock()
+	if !configLoaded {
+		cachedConfig, cachedErr = loadImpl()
+		configLoaded = true
+	}
+	return cachedConfig, cachedErr
+}
+
+// InvalidateCache resets the cached config so the next Load re-reads from disk.
+func InvalidateCache() {
+	configMu.Lock()
+	defer configMu.Unlock()
+	configLoaded = false
+	cachedConfig = nil
+	cachedErr = nil
+}
+
+func loadImpl() (*Config, error) {
 	if err := EnsureDirectories(); err != nil {
 		return nil, err
 	}
@@ -190,33 +221,7 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("error parsing config: %w", err)
 	}
 
-	// Expand environment variables in sensitive fields
-	cfg.Server.Auth.APIKey.KeyID = os.ExpandEnv(cfg.Server.Auth.APIKey.KeyID)
-	cfg.Server.Auth.APIKey.Secret = os.ExpandEnv(cfg.Server.Auth.APIKey.Secret)
-	cfg.Server.Auth.APIKey.HMACKey = os.ExpandEnv(cfg.Server.Auth.APIKey.HMACKey)
-	cfg.Local.AnthropicAPIKey = os.ExpandEnv(cfg.Local.AnthropicAPIKey)
-
-	// Environment variable overrides for API key auth
-	if keyID := os.Getenv("INTENTRA_API_KEY_ID"); keyID != "" {
-		cfg.Server.Auth.APIKey.KeyID = keyID
-	}
-	if secret := os.Getenv("INTENTRA_API_SECRET"); secret != "" {
-		cfg.Server.Auth.APIKey.Secret = secret
-	}
-	if hmacKey := os.Getenv("INTENTRA_API_HMAC_KEY"); hmacKey != "" {
-		cfg.Server.Auth.APIKey.HMACKey = hmacKey
-	}
-
-	// ANTHROPIC_API_KEY env takes precedence for local analysis
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-		cfg.Local.AnthropicAPIKey = key
-	}
-
-	// INTENTRA_SERVER_ENDPOINT enables server sync
-	if endpoint := os.Getenv("INTENTRA_SERVER_ENDPOINT"); endpoint != "" {
-		cfg.Server.Enabled = true
-		cfg.Server.Endpoint = endpoint
-	}
+	cfg.applyEnvOverrides()
 
 	return cfg, nil
 }
@@ -247,13 +252,19 @@ func LoadWithFile(cfgFile string) (*Config, error) {
 		return nil, fmt.Errorf("error parsing config: %w", err)
 	}
 
-	// Expand environment variables
+	cfg.applyEnvOverrides()
+
+	return cfg, nil
+}
+
+// applyEnvOverrides expands environment variables in sensitive fields and
+// applies environment variable overrides. Called by both Load and LoadWithFile.
+func (cfg *Config) applyEnvOverrides() {
 	cfg.Server.Auth.APIKey.KeyID = os.ExpandEnv(cfg.Server.Auth.APIKey.KeyID)
 	cfg.Server.Auth.APIKey.Secret = os.ExpandEnv(cfg.Server.Auth.APIKey.Secret)
 	cfg.Server.Auth.APIKey.HMACKey = os.ExpandEnv(cfg.Server.Auth.APIKey.HMACKey)
 	cfg.Local.AnthropicAPIKey = os.ExpandEnv(cfg.Local.AnthropicAPIKey)
 
-	// Environment variable overrides
 	if keyID := os.Getenv("INTENTRA_API_KEY_ID"); keyID != "" {
 		cfg.Server.Auth.APIKey.KeyID = keyID
 	}
@@ -263,8 +274,13 @@ func LoadWithFile(cfgFile string) (*Config, error) {
 	if hmacKey := os.Getenv("INTENTRA_API_HMAC_KEY"); hmacKey != "" {
 		cfg.Server.Auth.APIKey.HMACKey = hmacKey
 	}
-
-	return cfg, nil
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		cfg.Local.AnthropicAPIKey = key
+	}
+	if endpoint := os.Getenv("INTENTRA_SERVER_ENDPOINT"); endpoint != "" {
+		cfg.Server.Enabled = true
+		cfg.Server.Endpoint = endpoint
+	}
 }
 
 // Validate checks if the configuration is valid for server sync.
@@ -278,7 +294,7 @@ func (c *Config) Validate() error {
 	}
 
 	switch c.Server.Auth.Mode {
-	case "api_key":
+	case AuthModeAPIKey:
 		if c.Server.Auth.APIKey.KeyID == "" {
 			return fmt.Errorf("api_key auth requires key_id")
 		}
@@ -315,7 +331,7 @@ func (c *Config) Print() {
 		} else {
 			fmt.Printf("  Auth Mode: jwt (via 'intentra login')\n")
 		}
-		if c.Server.Auth.Mode == "api_key" {
+		if c.Server.Auth.Mode == AuthModeAPIKey {
 			fmt.Printf("  Key ID: %s\n", c.Server.Auth.APIKey.KeyID)
 			if c.Server.Auth.APIKey.HMACKey != "" {
 				fmt.Printf("  HMAC Key: [REDACTED] (HMAC signing enabled)\n")

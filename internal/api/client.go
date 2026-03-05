@@ -14,16 +14,16 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 
 	"github.com/atbabers/intentra-cli/internal/auth"
 	"github.com/atbabers/intentra-cli/internal/config"
 	"github.com/atbabers/intentra-cli/internal/debug"
 	"github.com/atbabers/intentra-cli/internal/device"
+	"github.com/atbabers/intentra-cli/internal/httputil"
 	"github.com/atbabers/intentra-cli/pkg/models"
 )
-
-const maxResponseSize = 10 * 1024 * 1024 // 10 MB
 
 // UserAgent is the User-Agent header value sent with all API requests.
 const UserAgent = "intentra-cli/1.0"
@@ -103,7 +103,7 @@ func (c *Client) SendScan(scan *models.Scan) error {
 	debug.LogHTTP("POST", url, resp.StatusCode)
 
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, httputil.MaxResponseSize))
 		if readErr != nil {
 			return fmt.Errorf("API returned %d (failed to read body: %w)", resp.StatusCode, readErr)
 		}
@@ -131,11 +131,11 @@ func (c *Client) addAuth(req *http.Request) error {
 		debug.Warn("credential check failed: %v", err)
 	}
 	if creds != nil {
-		return c.addJWTAuth(req)
+		return c.addJWTAuthWithCreds(req, creds)
 	}
 
 	switch c.cfg.Server.Auth.Mode {
-	case "api_key":
+	case config.AuthModeAPIKey:
 		return c.addAPIKeyAuth(req)
 	default:
 		return fmt.Errorf("not authenticated - run 'intentra login' or configure api_key auth in config.yaml")
@@ -188,6 +188,7 @@ func (c *Client) addAPIKeyAuth(req *http.Request) error {
 }
 
 // addJWTAuth adds JWT Bearer token authentication from stored credentials.
+// Loads credentials internally; use addJWTAuthWithCreds when creds are already loaded.
 func (c *Client) addJWTAuth(req *http.Request) error {
 	creds, err := auth.GetValidCredentials()
 	if err != nil {
@@ -196,7 +197,11 @@ func (c *Client) addJWTAuth(req *http.Request) error {
 	if creds == nil {
 		return fmt.Errorf("not authenticated - run 'intentra login' first")
 	}
+	return c.addJWTAuthWithCreds(req, creds)
+}
 
+// addJWTAuthWithCreds adds JWT auth headers using pre-loaded credentials.
+func (c *Client) addJWTAuthWithCreds(req *http.Request, creds *auth.Credentials) error {
 	req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
 
 	deviceID, err := device.GetDeviceID()
@@ -206,6 +211,78 @@ func (c *Client) addJWTAuth(req *http.Request) error {
 	req.Header.Set("X-Machine-ID", deviceID)
 
 	return nil
+}
+
+// doJWTRequest executes an authenticated JSON request against the default API endpoint.
+func doJWTRequest(method, path, accessToken string, body []byte, acceptedStatuses ...int) error {
+	deviceID, err := device.GetDeviceID()
+	if err != nil {
+		return fmt.Errorf("failed to get device ID: %w", err)
+	}
+
+	reqURL := config.DefaultAPIEndpoint + path
+	req, err := http.NewRequest(method, reqURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create %s request: %w", method, err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-Machine-ID", deviceID)
+
+	resp, err := httputil.DefaultClient.Do(req)
+	if err != nil {
+		debug.LogHTTP(method, reqURL, 0)
+		return fmt.Errorf("%s request failed: %w", method, err)
+	}
+	defer resp.Body.Close()
+	debug.LogHTTP(method, reqURL, resp.StatusCode)
+
+	if slices.Contains(acceptedStatuses, resp.StatusCode) {
+		return nil
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, httputil.MaxResponseSize))
+	return fmt.Errorf("%s returned %d: %s", method, resp.StatusCode, string(respBody))
+}
+
+// SendScanWithJWT sends a scan to the default API endpoint using JWT auth.
+func SendScanWithJWT(scan *models.Scan, accessToken string) error {
+	deviceID, err := device.GetDeviceID()
+	if err != nil {
+		return fmt.Errorf("failed to get device ID: %w", err)
+	}
+
+	jsonBody, err := json.Marshal(scan.BuildAPIPayload(deviceID))
+	if err != nil {
+		return fmt.Errorf("failed to marshal scan: %w", err)
+	}
+
+	return doJWTRequest("POST", "/scans", accessToken, jsonBody,
+		http.StatusAccepted, http.StatusOK, http.StatusCreated)
+}
+
+// PatchSessionEnd sends a PATCH to update session-end metadata on a scan.
+func PatchSessionEnd(scanID, accessToken, reason string, durationMs int64) error {
+	body := map[string]any{}
+	if reason != "" {
+		body["session_end_reason"] = reason
+	}
+	if durationMs > 0 {
+		body["session_duration_ms"] = durationMs
+	}
+
+	if len(body) == 0 {
+		return nil
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("failed to marshal session end body: %w", err)
+	}
+
+	return doJWTRequest("PATCH", "/scans/"+url.PathEscape(scanID)+"/session", accessToken, jsonBody,
+		http.StatusOK, http.StatusNoContent)
 }
 
 // GetScans retrieves scans from the API.
@@ -238,7 +315,7 @@ func (c *Client) GetScans(days, limit int) (*ScansResponse, error) {
 	defer resp.Body.Close()
 	debug.LogHTTP("GET", url, resp.StatusCode)
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, httputil.MaxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -286,7 +363,7 @@ func (c *Client) GetScan(scanID string) (*ScanDetailResponse, error) {
 	defer resp.Body.Close()
 	debug.LogHTTP("GET", url, resp.StatusCode)
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, httputil.MaxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}

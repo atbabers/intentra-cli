@@ -119,15 +119,12 @@ func LoadCredentialsFromKeyring() (*Credentials, error) {
 
 	kr, err := openKeyring()
 	if err != nil {
-		return loadFromEncryptedCache()
+		return ReadEncryptedCache()
 	}
 
 	item, err := kr.Get(credentialsKey)
 	if err != nil {
-		if err == keyring.ErrKeyNotFound {
-			return loadFromEncryptedCache()
-		}
-		return loadFromEncryptedCache()
+		return ReadEncryptedCache()
 	}
 
 	var creds Credentials
@@ -162,10 +159,6 @@ func deleteCredentialsFromKeyringUnlocked() error {
 	return nil
 }
 
-func loadFromEncryptedCache() (*Credentials, error) {
-	return ReadEncryptedCache()
-}
-
 func GetOrCreateCacheKey() ([]byte, error) {
 	kr, err := openKeyring()
 	if err != nil {
@@ -174,7 +167,7 @@ func GetOrCreateCacheKey() ([]byte, error) {
 	}
 
 	item, err := kr.Get(cacheKeyKey)
-	if err == nil && len(item.Data) == 32 {
+	if err == nil && len(item.Data) == keySize {
 		return item.Data, nil
 	}
 

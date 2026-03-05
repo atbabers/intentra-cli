@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -10,14 +9,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
-	"runtime"
-	"strings"
-	"time"
 
 	"github.com/atbabers/intentra-cli/internal/config"
+	"github.com/atbabers/intentra-cli/internal/device"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -229,7 +225,7 @@ func generateRandomKey() ([]byte, error) {
 }
 
 func getDerivedKey() ([]byte, error) {
-	machineID, err := getMachineID()
+	machineID, err := device.GetRawHardwareID()
 	if err != nil {
 		machineID = "fallback-machine-id"
 	}
@@ -253,77 +249,3 @@ func getDerivedKey() ([]byte, error) {
 	return key, nil
 }
 
-func getMachineID() (string, error) {
-	switch runtime.GOOS {
-	case "linux":
-		return getLinuxMachineID()
-	case "darwin":
-		return getDarwinMachineID()
-	case "windows":
-		return getWindowsMachineID()
-	default:
-		return "", fmt.Errorf("unsupported platform: %s", runtime.GOOS)
-	}
-}
-
-func getLinuxMachineID() (string, error) {
-	paths := []string{
-		"/etc/machine-id",
-		"/var/lib/dbus/machine-id",
-	}
-
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err == nil {
-			return strings.TrimSpace(string(data)), nil
-		}
-	}
-
-	return "", fmt.Errorf("machine-id not found")
-}
-
-func getDarwinMachineID() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "IOPlatformUUID") {
-			parts := strings.Split(line, "=")
-			if len(parts) == 2 {
-				uuid := strings.TrimSpace(parts[1])
-				uuid = strings.Trim(uuid, "\"")
-				return uuid, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("IOPlatformUUID not found")
-}
-
-func getWindowsMachineID() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "reg", "query", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid")
-	output, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "MachineGuid") {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 {
-				return fields[len(fields)-1], nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("MachineGuid not found")
-}

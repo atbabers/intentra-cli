@@ -2,14 +2,11 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/atbabers/intentra-cli/internal/config"
 	"github.com/atbabers/intentra-cli/internal/hooks"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 func newHooksCmd() *cobra.Command {
@@ -24,36 +21,18 @@ func newHooksCmd() *cobra.Command {
 }
 
 func saveAPIConfig(server, keyID, secret string) error {
-	configDir, err := config.GetConfigDir()
+	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("failed to determine config directory: %w", err)
-	}
-	if err := os.MkdirAll(configDir, 0700); err != nil {
-		return err
+		cfg = config.DefaultConfig()
 	}
 
-	configData := map[string]any{
-		"server": map[string]any{
-			"enabled":  true,
-			"endpoint": server,
-			"timeout":  "30s",
-			"auth": map[string]any{
-				"mode": "api_key",
-				"api_key": map[string]any{
-					"key_id": keyID,
-					"secret": secret,
-				},
-			},
-		},
-	}
+	cfg.Server.Enabled = true
+	cfg.Server.Endpoint = server
+	cfg.Server.Auth.Mode = config.AuthModeAPIKey
+	cfg.Server.Auth.APIKey.KeyID = keyID
+	cfg.Server.Auth.APIKey.Secret = secret
 
-	configContent, err := yaml.Marshal(configData)
-	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	configPath := filepath.Join(configDir, "config.yaml")
-	return os.WriteFile(configPath, configContent, 0600)
+	return config.SaveConfig(cfg)
 }
 
 func newHooksStatusCmd() *cobra.Command {

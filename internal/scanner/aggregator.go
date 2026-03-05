@@ -4,9 +4,6 @@
 package scanner
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"os"
 	"sort"
 	"strings"
 
@@ -96,17 +93,7 @@ func createScan(conversationID string, events []models.Event) models.Scan {
 		scan.StartTime = events[0].Timestamp
 		scan.EndTime = events[len(events)-1].Timestamp
 
-		hash := sha256.Sum256([]byte(conversationID + scan.StartTime.String()))
-		scan.ID = hex.EncodeToString(hash[:12])
-	}
-
-	llmEvents := map[string]bool{
-		"after_response": true, "after_tool": true, "after_file_edit": true,
-		"after_file_read": true, "after_shell": true, "after_mcp": true, "after_model": true,
-	}
-	toolEvents := map[string]bool{
-		"after_tool": true, "after_file_edit": true, "after_file_read": true,
-		"after_shell": true, "after_mcp": true,
+		scan.ID = models.GenerateScanID(conversationID, scan.StartTime)
 	}
 
 	for _, e := range events {
@@ -114,20 +101,17 @@ func createScan(conversationID string, events []models.Event) models.Scan {
 		scan.OutputTokens += e.OutputTokens
 		scan.ThinkingTokens += e.ThinkingTokens
 
-		if llmEvents[e.NormalizedType] {
+		eventType := models.NormalizedEventType(e.NormalizedType)
+		if models.IsLLMCallEvent(eventType) {
 			scan.LLMCalls++
 		}
-		if toolEvents[e.NormalizedType] {
+		if models.IsToolCallEvent(eventType) {
 			scan.ToolCalls++
 		}
 	}
 
 	scan.TotalTokens = scan.InputTokens + scan.OutputTokens + scan.ThinkingTokens
 	scan.EstimatedCost = EstimateCost(scan.TotalTokens, getModel(events), getTool(events))
-
-	scan.Fingerprint = calculateFingerprint(events)
-	scan.FilesHash = calculateFilesHash(events)
-	scan.ActionCounts = calculateActionCounts(events)
 
 	return scan
 }
@@ -189,100 +173,6 @@ func EstimateCost(tokens int, model string, tool ...string) float64 {
 	return float64(tokens) / 1000.0 * basePrice * multiplier
 }
 
-func calculateFingerprint(events []models.Event) string {
-	var prompts []string
-	for _, e := range events {
-		if e.Prompt != "" {
-			normalized := strings.ToLower(strings.TrimSpace(e.Prompt))
-			if len(normalized) > 100 {
-				normalized = normalized[:100]
-			}
-			if normalized != "" {
-				prompts = append(prompts, normalized)
-			}
-		}
-	}
-
-	if len(prompts) == 0 {
-		return ""
-	}
-
-	sort.Strings(prompts)
-	combined := strings.Join(prompts, "|")
-	hash := sha256.Sum256([]byte(combined))
-	return hex.EncodeToString(hash[:])[:16]
-}
-
-func calculateFilesHash(events []models.Event) string {
-	fileSet := make(map[string]bool)
-	for _, e := range events {
-		if e.FilePath != "" {
-			fileSet[strings.ToLower(e.FilePath)] = true
-		}
-	}
-
-	if len(fileSet) == 0 {
-		return ""
-	}
-
-	var files []string
-	for f := range fileSet {
-		files = append(files, f)
-	}
-	sort.Strings(files)
-
-	combined := strings.Join(files, "|")
-	hash := sha256.Sum256([]byte(combined))
-	return hex.EncodeToString(hash[:])[:8]
-}
-
-func calculateActionCounts(events []models.Event) map[string]int {
-	counts := map[string]int{
-		"edits":  0,
-		"reads":  0,
-		"shell":  0,
-		"mcp":    0,
-		"failed": 0,
-	}
-
-	editTypes := map[string]bool{"after_file_edit": true, "before_file_edit": true}
-	readTypes := map[string]bool{"after_file_read": true, "before_file_read": true}
-	shellTypes := map[string]bool{"after_shell": true, "before_shell": true}
-	mcpTypes := map[string]bool{"after_mcp": true, "before_mcp": true}
-
-	for _, e := range events {
-		if editTypes[e.NormalizedType] {
-			counts["edits"]++
-		} else if readTypes[e.NormalizedType] {
-			counts["reads"]++
-		} else if shellTypes[e.NormalizedType] {
-			counts["shell"]++
-		} else if mcpTypes[e.NormalizedType] {
-			counts["mcp"]++
-		}
-
-		if e.Error != "" {
-			counts["failed"]++
-		}
-	}
-
-	return counts
-}
-
-// sanitizePath replaces the home directory prefix with ~ to avoid storing absolute paths.
-func sanitizePath(path string) string {
-	if path == "" {
-		return path
-	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return path
-	}
-	if strings.HasPrefix(path, home) {
-		return "~" + path[len(home):]
-	}
-	return path
-}
 
 // AggregateFilesModified builds per-file edit statistics from a slice of events.
 func AggregateFilesModified(events []models.Event) []map[string]any {
@@ -308,10 +198,10 @@ func AggregateFilesModified(events []models.Event) []map[string]any {
 			stats[path] = s
 		}
 
-		switch ev.NormalizedType {
-		case "before_file_edit":
+		switch models.NormalizedEventType(ev.NormalizedType) {
+		case models.EventBeforeFileEdit:
 			s.seenBefore = true
-		case "after_file_edit":
+		case models.EventAfterFileEdit:
 			s.editCount++
 			s.linesAdded += ev.OutputTokens / 15
 			if !s.seenBefore {
@@ -330,7 +220,7 @@ func AggregateFilesModified(events []models.Event) []map[string]any {
 			continue
 		}
 		entry := map[string]any{
-			"file_path":     sanitizePath(path),
+			"file_path":     models.SanitizePath(path),
 			"is_new_file":   s.isNew,
 			"lines_added":   s.linesAdded,
 			"lines_removed": s.linesRemoved,

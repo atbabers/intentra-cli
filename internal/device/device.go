@@ -66,6 +66,13 @@ func generateDeviceID() (string, error) {
 	return hex.EncodeToString(hash)[:32], nil
 }
 
+// GetRawHardwareID retrieves the raw platform-specific hardware identifier.
+// Exported so that other packages (e.g. auth/encryption) can derive keys
+// from hardware identity without duplicating platform detection logic.
+func GetRawHardwareID() (string, error) {
+	return getHardwareID()
+}
+
 // getHardwareID retrieves the hardware-specific identifier.
 func getHardwareID() (string, error) {
 	switch runtime.GOOS {

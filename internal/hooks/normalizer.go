@@ -1,47 +1,49 @@
 // Package hooks provides event normalization across AI coding tools.
-// This file defines the unified event type schema and normalizer interface.
+// This file defines the normalizer interface. Event type constants are defined
+// in pkg/models/event.go; aliases are provided here for package-level convenience.
 package hooks
 
-// NormalizedEventType represents a unified event type across all AI coding tools.
-// All tool-specific event names are normalized to these snake_case types.
-type NormalizedEventType string
+import "github.com/atbabers/intentra-cli/pkg/models"
+
+// NormalizedEventType is an alias for models.NormalizedEventType.
+type NormalizedEventType = models.NormalizedEventType
 
 const (
-	EventSessionStart NormalizedEventType = "session_start"
-	EventSessionEnd   NormalizedEventType = "session_end"
+	EventSessionStart = models.EventSessionStart
+	EventSessionEnd   = models.EventSessionEnd
 
-	EventBeforePrompt  NormalizedEventType = "before_prompt"
-	EventAfterResponse NormalizedEventType = "after_response"
-	EventAgentThought  NormalizedEventType = "agent_thought"
+	EventBeforePrompt  = models.EventBeforePrompt
+	EventAfterResponse = models.EventAfterResponse
+	EventAgentThought  = models.EventAgentThought
 
-	EventBeforeTool NormalizedEventType = "before_tool"
-	EventAfterTool  NormalizedEventType = "after_tool"
+	EventBeforeTool = models.EventBeforeTool
+	EventAfterTool  = models.EventAfterTool
 
-	EventBeforeFileRead NormalizedEventType = "before_file_read"
-	EventAfterFileRead  NormalizedEventType = "after_file_read"
-	EventBeforeFileEdit NormalizedEventType = "before_file_edit"
-	EventAfterFileEdit  NormalizedEventType = "after_file_edit"
+	EventBeforeFileRead = models.EventBeforeFileRead
+	EventAfterFileRead  = models.EventAfterFileRead
+	EventBeforeFileEdit = models.EventBeforeFileEdit
+	EventAfterFileEdit  = models.EventAfterFileEdit
 
-	EventBeforeShell NormalizedEventType = "before_shell"
-	EventAfterShell  NormalizedEventType = "after_shell"
+	EventBeforeShell = models.EventBeforeShell
+	EventAfterShell  = models.EventAfterShell
 
-	EventBeforeMCP NormalizedEventType = "before_mcp"
-	EventAfterMCP  NormalizedEventType = "after_mcp"
+	EventBeforeMCP = models.EventBeforeMCP
+	EventAfterMCP  = models.EventAfterMCP
 
-	EventBeforeModel NormalizedEventType = "before_model"
-	EventAfterModel  NormalizedEventType = "after_model"
+	EventBeforeModel = models.EventBeforeModel
+	EventAfterModel  = models.EventAfterModel
 
-	EventToolSelection     NormalizedEventType = "tool_selection"
-	EventPermissionRequest NormalizedEventType = "permission_request"
-	EventNotification      NormalizedEventType = "notification"
-	EventStop              NormalizedEventType = "stop"
-	EventSubagentStart     NormalizedEventType = "subagent_start"
-	EventSubagentStop      NormalizedEventType = "subagent_stop"
-	EventPreCompact        NormalizedEventType = "pre_compact"
-	EventError             NormalizedEventType = "error"
-	EventToolUseFailure    NormalizedEventType = "tool_use_failure"
-	EventWorktreeSetup     NormalizedEventType = "worktree_setup"
-	EventUnknown           NormalizedEventType = "unknown"
+	EventToolSelection     = models.EventToolSelection
+	EventPermissionRequest = models.EventPermissionRequest
+	EventNotification      = models.EventNotification
+	EventStop              = models.EventStop
+	EventSubagentStart     = models.EventSubagentStart
+	EventSubagentStop      = models.EventSubagentStop
+	EventPreCompact        = models.EventPreCompact
+	EventError             = models.EventError
+	EventToolUseFailure    = models.EventToolUseFailure
+	EventWorktreeSetup     = models.EventWorktreeSetup
+	EventUnknown           = models.EventUnknown
 )
 
 // Normalizer defines the interface for tool-specific event normalizers.
@@ -98,6 +100,88 @@ func (n *GenericNormalizer) NormalizeEventType(native string) NormalizedEventTyp
 	return EventUnknown
 }
 
+// toolMappings defines the event type mappings for all supported AI coding tools.
+// Each tool maps its native event names to unified NormalizedEventType constants.
+var toolMappings = map[string]map[string]NormalizedEventType{
+	"cursor": {
+		"sessionStart":         EventSessionStart,
+		"sessionEnd":           EventSessionEnd,
+		"beforeSubmitPrompt":   EventBeforePrompt,
+		"afterAgentResponse":   EventAfterResponse,
+		"afterAgentThought":    EventAgentThought,
+		"beforeShellExecution": EventBeforeShell,
+		"afterShellExecution":  EventAfterShell,
+		"beforeMCPExecution":   EventBeforeMCP,
+		"afterMCPExecution":    EventAfterMCP,
+		"beforeTabFileRead":    EventBeforeFileRead,
+		"beforeReadFile":       EventBeforeFileRead,
+		"afterFileEdit":        EventAfterFileEdit,
+		"afterTabFileEdit":     EventAfterFileEdit,
+		"preToolUse":           EventBeforeTool,
+		"postToolUse":          EventAfterTool,
+		"postToolUseFailure":   EventToolUseFailure,
+		"preCompact":           EventPreCompact,
+		"subagentStart":        EventSubagentStart,
+		"subagentStop":         EventSubagentStop,
+		"stop":                 EventStop,
+	},
+	"claude": {
+		"SessionStart":       EventSessionStart,
+		"SessionEnd":         EventSessionEnd,
+		"UserPromptSubmit":   EventBeforePrompt,
+		"PreToolUse":         EventBeforeTool,
+		"PostToolUse":        EventAfterTool,
+		"PostToolUseFailure": EventToolUseFailure,
+		"PermissionRequest":  EventPermissionRequest,
+		"Notification":       EventNotification,
+		"Stop":               EventStop,
+		"SubagentStart":      EventBeforePrompt,
+		"SubagentStop":       EventSubagentStop,
+		"PreCompact":         EventPreCompact,
+		"Setup":              EventSessionStart,
+	},
+	"copilot": {
+		"sessionStart":        EventSessionStart,
+		"sessionEnd":          EventSessionEnd,
+		"userPromptSubmitted": EventBeforePrompt,
+		"preToolUse":          EventBeforeTool,
+		"postToolUse":         EventAfterTool,
+		"errorOccurred":       EventError,
+	},
+	"windsurf": {
+		"pre_user_prompt":       EventBeforePrompt,
+		"post_cascade_response": EventAfterResponse,
+		"pre_read_code":         EventBeforeFileRead,
+		"post_read_code":        EventAfterFileRead,
+		"pre_write_code":        EventBeforeFileEdit,
+		"post_write_code":       EventAfterFileEdit,
+		"pre_run_command":       EventBeforeShell,
+		"post_run_command":      EventAfterShell,
+		"pre_mcp_tool_use":      EventBeforeMCP,
+		"post_mcp_tool_use":     EventAfterMCP,
+		"post_setup_worktree":   EventWorktreeSetup,
+	},
+	"gemini": {
+		"SessionStart":        EventSessionStart,
+		"SessionEnd":          EventSessionEnd,
+		"BeforeAgent":         EventBeforePrompt,
+		"AfterAgent":          EventAfterResponse,
+		"BeforeModel":         EventBeforeModel,
+		"AfterModel":          EventAfterModel,
+		"BeforeToolSelection": EventToolSelection,
+		"BeforeTool":          EventBeforeTool,
+		"AfterTool":           EventAfterTool,
+		"PreCompress":         EventPreCompact,
+		"Notification":        EventNotification,
+	},
+}
+
+func init() {
+	for tool, mapping := range toolMappings {
+		RegisterNormalizer(&tableNormalizer{tool: tool, mapping: mapping})
+	}
+}
+
 // IsStopEvent returns true if the event type marks the end of a scan.
 // Each tool has exactly ONE designated terminal event to prevent duplicate scans.
 //
@@ -125,25 +209,12 @@ func IsSessionEndEvent(eventType NormalizedEventType, tool string) bool {
 	return eventType == EventSessionEnd
 }
 
-// IsLLMCallEvent returns true if the event represents an LLM call.
-// Every "after" action event involves the LLM making a decision.
+// IsLLMCallEvent delegates to models.IsLLMCallEvent.
 func IsLLMCallEvent(eventType NormalizedEventType) bool {
-	return eventType == EventAfterResponse ||
-		eventType == EventAfterTool ||
-		eventType == EventAfterFileEdit ||
-		eventType == EventAfterFileRead ||
-		eventType == EventAfterShell ||
-		eventType == EventAfterMCP ||
-		eventType == EventAfterModel ||
-		eventType == EventAgentThought
+	return models.IsLLMCallEvent(eventType)
 }
 
-// IsToolCallEvent returns true if the event represents a tool execution.
-// Tool calls are a subset of LLM calls.
+// IsToolCallEvent delegates to models.IsToolCallEvent.
 func IsToolCallEvent(eventType NormalizedEventType) bool {
-	return eventType == EventAfterTool ||
-		eventType == EventAfterFileEdit ||
-		eventType == EventAfterFileRead ||
-		eventType == EventAfterShell ||
-		eventType == EventAfterMCP
+	return models.IsToolCallEvent(eventType)
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/atbabers/intentra-cli/internal/config"
 	"github.com/atbabers/intentra-cli/internal/debug"
 	"github.com/atbabers/intentra-cli/internal/device"
+	"github.com/atbabers/intentra-cli/internal/httputil"
 	"github.com/spf13/cobra"
 )
 
@@ -248,7 +249,7 @@ func fetchUserProfile(endpoint, accessToken string) (*userProfile, error) {
 
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := auth.HTTPClient.Do(req)
+	resp, err := httputil.DefaultClient.Do(req)
 	if err != nil {
 		debug.LogHTTP("GET", url, 0)
 		return nil, fmt.Errorf("request failed: %w", err)
@@ -256,7 +257,7 @@ func fetchUserProfile(endpoint, accessToken string) (*userProfile, error) {
 	defer resp.Body.Close()
 	debug.LogHTTP("GET", url, resp.StatusCode)
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, auth.MaxResponseSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, httputil.MaxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -284,7 +285,7 @@ func fetchOrganization(endpoint, accessToken, orgID string) (*organization, erro
 
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := auth.HTTPClient.Do(req)
+	resp, err := httputil.DefaultClient.Do(req)
 	if err != nil {
 		debug.LogHTTP("GET", url, 0)
 		return nil, fmt.Errorf("request failed: %w", err)
@@ -296,7 +297,7 @@ func fetchOrganization(endpoint, accessToken, orgID string) (*organization, erro
 		return nil, fmt.Errorf("failed to fetch organization: %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, auth.MaxResponseSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, httputil.MaxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -324,7 +325,7 @@ func capitalizeFirst(s string) string {
 func requestDeviceCode(endpoint string) (*auth.DeviceCodeResponse, error) {
 	url := endpoint + "/oauth/device/code"
 
-	resp, err := auth.HTTPClient.Post(url, "application/json", nil)
+	resp, err := httputil.DefaultClient.Post(url, "application/json", nil)
 	if err != nil {
 		debug.LogHTTP("POST", url, 0)
 		return nil, fmt.Errorf("request failed: %w", err)
@@ -332,7 +333,7 @@ func requestDeviceCode(endpoint string) (*auth.DeviceCodeResponse, error) {
 	defer resp.Body.Close()
 	debug.LogHTTP("POST", url, resp.StatusCode)
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, auth.MaxResponseSize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, httputil.MaxResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -370,14 +371,14 @@ func pollForToken(endpoint string, deviceResp *auth.DeviceCodeResponse) (*auth.T
 		default:
 		}
 
-		resp, err := auth.HTTPClient.Post(url, "application/json", bytes.NewReader(payloadBytes))
+		resp, err := httputil.DefaultClient.Post(url, "application/json", bytes.NewReader(payloadBytes))
 		if err != nil {
 			debug.LogHTTP("POST", url, 0)
 			time.Sleep(interval)
 			continue
 		}
 
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, auth.MaxResponseSize))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, httputil.MaxResponseSize))
 		resp.Body.Close()
 		debug.LogHTTP("POST", url, resp.StatusCode)
 
@@ -463,7 +464,7 @@ func registerMachine(endpoint, accessToken string) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := auth.HTTPClient.Do(req)
+	resp, err := httputil.DefaultClient.Do(req)
 	if err != nil {
 		debug.LogHTTP("POST", url, 0)
 		return fmt.Errorf("request failed: %w", err)
@@ -471,7 +472,7 @@ func registerMachine(endpoint, accessToken string) error {
 	defer resp.Body.Close()
 	debug.LogHTTP("POST", url, resp.StatusCode)
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, auth.MaxResponseSize))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, httputil.MaxResponseSize))
 
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusCreated:

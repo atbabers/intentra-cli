@@ -1,11 +1,20 @@
 package models
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
+
+// GenerateScanID produces a deterministic scan ID from a conversation ID and start time.
+func GenerateScanID(conversationID string, startTime time.Time) string {
+	hash := sha256.Sum256([]byte(conversationID + startTime.String()))
+	return "scan_" + hex.EncodeToString(hash[:])[:12]
+}
 
 // ScanStatus represents the processing state of a scan.
 type ScanStatus string
@@ -74,13 +83,25 @@ type Scan struct {
 	FilesModified []map[string]any `json:"files_modified,omitempty"`
 }
 
-// sanitizePath replaces the home directory prefix with ~ to avoid storing absolute paths.
-func sanitizePath(path string) string {
+var (
+	homeDirOnce sync.Once
+	homeDir     string
+)
+
+func cachedHomeDir() string {
+	homeDirOnce.Do(func() {
+		homeDir, _ = os.UserHomeDir()
+	})
+	return homeDir
+}
+
+// SanitizePath replaces the home directory prefix with ~ to avoid storing absolute paths.
+func SanitizePath(path string) string {
 	if path == "" {
 		return path
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	home := cachedHomeDir()
+	if home == "" {
 		return path
 	}
 	if strings.HasPrefix(path, home) {
@@ -145,7 +166,7 @@ func (s *Scan) BuildAPIPayload(deviceID string) map[string]any {
 			for k, v := range entry {
 				if k == "file_path" {
 					if fp, ok := v.(string); ok {
-						sanitizedEntry[k] = sanitizePath(fp)
+						sanitizedEntry[k] = SanitizePath(fp)
 						continue
 					}
 				}
