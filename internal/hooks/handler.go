@@ -501,7 +501,9 @@ func extractToolIO(event *models.Event, raw map[string]any) {
 	}
 
 	if toolArgs, ok := raw["toolArgs"].(string); ok && event.ToolInput == nil {
-		event.ToolInput = json.RawMessage(toolArgs)
+		if b, err := json.Marshal(toolArgs); err == nil {
+			event.ToolInput = json.RawMessage(b)
+		}
 	}
 
 	if toolOutput, ok := raw["tool_output"].(string); ok {
@@ -622,10 +624,10 @@ func sanitizeEvent(event *models.Event) {
 	event.Command = redactContent(event.Command)
 	event.CommandOutput = redactContent(event.CommandOutput)
 	if len(event.ToolInput) > 0 {
-		event.ToolInput = json.RawMessage("[redacted: " + strconv.Itoa(len(event.ToolInput)) + " chars]")
+		event.ToolInput = nil
 	}
 	if len(event.ToolOutput) > 0 {
-		event.ToolOutput = json.RawMessage("[redacted: " + strconv.Itoa(len(event.ToolOutput)) + " chars]")
+		event.ToolOutput = nil
 	}
 	event.FilePath = models.SanitizePath(event.FilePath)
 }

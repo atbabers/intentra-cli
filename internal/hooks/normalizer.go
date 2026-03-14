@@ -138,7 +138,6 @@ var toolMappings = map[string]map[string]NormalizedEventType{
 		"SubagentStart":      EventBeforePrompt,
 		"SubagentStop":       EventSubagentStop,
 		"PreCompact":         EventPreCompact,
-		"Setup":              EventSessionStart,
 	},
 	"copilot": {
 		"sessionStart":        EventSessionStart,

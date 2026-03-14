@@ -86,11 +86,15 @@ func TestLoadScan(t *testing.T) {
 	defer os.Unsetenv("INTENTRA_CONFIG_DIR")
 
 	scansDir := filepath.Join(tmpDir, "scans")
-	os.MkdirAll(scansDir, 0700)
+	if err := os.MkdirAll(scansDir, 0700); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
 
 	scan := models.Scan{ID: "load-test", Tool: "claude"}
 	data, _ := json.MarshalIndent(scan, "", "  ")
-	os.WriteFile(filepath.Join(scansDir, "load-test.json"), data, 0600)
+	if err := os.WriteFile(filepath.Join(scansDir, "load-test.json"), data, 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 
 	loaded, err := LoadScan("load-test")
 	if err != nil {
@@ -113,7 +117,9 @@ func TestLoadScan_NotFound(t *testing.T) {
 	os.Setenv("INTENTRA_CONFIG_DIR", tmpDir)
 	defer os.Unsetenv("INTENTRA_CONFIG_DIR")
 
-	os.MkdirAll(filepath.Join(tmpDir, "scans"), 0700)
+	if err := os.MkdirAll(filepath.Join(tmpDir, "scans"), 0700); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
 
 	_, err := LoadScan("nonexistent")
 	if err == nil {
@@ -127,8 +133,12 @@ func TestDeleteScan(t *testing.T) {
 	defer os.Unsetenv("INTENTRA_CONFIG_DIR")
 
 	scansDir := filepath.Join(tmpDir, "scans")
-	os.MkdirAll(scansDir, 0700)
-	os.WriteFile(filepath.Join(scansDir, "del-test.json"), []byte("{}"), 0600)
+	if err := os.MkdirAll(scansDir, 0700); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(scansDir, "del-test.json"), []byte("{}"), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 
 	if err := DeleteScan("del-test"); err != nil {
 		t.Fatalf("DeleteScan failed: %v", err)
@@ -150,7 +160,9 @@ func TestDeleteScan_Nonexistent(t *testing.T) {
 	os.Setenv("INTENTRA_CONFIG_DIR", tmpDir)
 	defer os.Unsetenv("INTENTRA_CONFIG_DIR")
 
-	os.MkdirAll(filepath.Join(tmpDir, "scans"), 0700)
+	if err := os.MkdirAll(filepath.Join(tmpDir, "scans"), 0700); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
 
 	if err := DeleteScan("does-not-exist"); err != nil {
 		t.Errorf("deleting nonexistent scan should not error, got: %v", err)
@@ -163,18 +175,24 @@ func TestLoadScans(t *testing.T) {
 	defer os.Unsetenv("INTENTRA_CONFIG_DIR")
 
 	scansDir := filepath.Join(tmpDir, "scans")
-	os.MkdirAll(scansDir, 0700)
+	if err := os.MkdirAll(scansDir, 0700); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
 
 	for _, id := range []string{"scan-a", "scan-b"} {
 		data, _ := json.Marshal(models.Scan{ID: id, Tool: "cursor"})
-		os.WriteFile(filepath.Join(scansDir, id+".json"), data, 0600)
+		if err := os.WriteFile(filepath.Join(scansDir, id+".json"), data, 0600); err != nil {
+			t.Fatalf("WriteFile failed: %v", err)
+		}
 	}
 
-	// Write a non-JSON file that should be skipped
-	os.WriteFile(filepath.Join(scansDir, "readme.txt"), []byte("not json"), 0600)
+	if err := os.WriteFile(filepath.Join(scansDir, "readme.txt"), []byte("not json"), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 
-	// Write malformed JSON that should be skipped
-	os.WriteFile(filepath.Join(scansDir, "bad.json"), []byte("{invalid"), 0600)
+	if err := os.WriteFile(filepath.Join(scansDir, "bad.json"), []byte("{invalid"), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 
 	scans, err := LoadScans()
 	if err != nil {
@@ -209,7 +227,9 @@ func TestLoadEvents(t *testing.T) {
 {"hook_type":"afterTool","normalized_type":"after_tool","timestamp":"2025-01-01T00:00:01Z","conversation_id":"c1"}
 {malformed json line}
 `
-	os.WriteFile(eventsFile, []byte(lines), 0600)
+	if err := os.WriteFile(eventsFile, []byte(lines), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
 
 	events, err := LoadEvents()
 	if err != nil {

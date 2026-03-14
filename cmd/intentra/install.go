@@ -36,11 +36,7 @@ Examples:
 				fmt.Println("✓ Saved API configuration")
 			}
 
-			execPath, err := os.Executable()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to get executable path: %v\n", err)
-				return err
-			}
+			execPath := "intentra"
 
 			tool := "all"
 			if len(args) > 0 {

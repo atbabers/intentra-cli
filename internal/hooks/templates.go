@@ -60,22 +60,6 @@ type CursorHookEntry struct {
 	Command string `json:"command"`
 }
 
-// ClaudeCodeHooks represents Claude Code's hooks configuration.
-type ClaudeCodeHooks struct {
-	PreToolExecution  []ClaudeHookEntry `json:"PreToolExecution,omitempty"`
-	PostToolExecution []ClaudeHookEntry `json:"PostToolExecution,omitempty"`
-	Notification      []ClaudeHookEntry `json:"Notification,omitempty"`
-	Stop              []ClaudeHookEntry `json:"Stop,omitempty"`
-}
-
-type ClaudeHookEntry struct {
-	Matcher string `json:"matcher"`
-	Hooks   []struct {
-		Type    string `json:"type"`
-		Command string `json:"command"`
-	} `json:"hooks"`
-}
-
 // cursorHookTypes contains all available hooks per https://docs.cursor.com/context/hooks.
 var cursorHookTypes = []string{
 	"sessionStart",
@@ -139,7 +123,6 @@ var claudeCodeHookTypes = []string{
 	"PostToolUse",
 	"PostToolUseFailure",
 	"PermissionRequest",
-	"Setup",
 	"SessionStart",
 	"SessionEnd",
 	"Stop",

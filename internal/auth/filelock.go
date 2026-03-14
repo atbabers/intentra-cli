@@ -87,7 +87,7 @@ func tryCleanStaleLock(lockFile string) bool {
 	lines := string(data)
 	var pid int
 	var lockTime int64
-	fmt.Sscanf(lines, "%d\n%d", &pid, &lockTime)
+	_, _ = fmt.Sscanf(lines, "%d\n%d", &pid, &lockTime)
 
 	// Auto-expire locks older than 60 seconds
 	if lockTime > 0 && time.Now().UnixMilli()-lockTime > 60000 {

@@ -30,6 +30,32 @@ func TestProcessEvent_ParsesEvent(t *testing.T) {
 	}
 }
 
+func TestProcessEvent_ToolInputDoesNotBreakMarshal(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.Enabled = false
+
+	toolUseInput := `{"session_id":"sess-456","tool_name":"Bash","tool_input":{"command":"ls -la"}}`
+	reader := bytes.NewBufferString(toolUseInput)
+	err := ProcessEventWithEvent(reader, cfg, "claude", "PostToolUse")
+	if err != nil {
+		t.Fatalf("PostToolUse with tool_input should not error, got: %v", err)
+	}
+
+	toolUseOutput := `{"session_id":"sess-456","tool_name":"Read","tool_input":{"file_path":"/tmp/test.go"},"tool_output":{"content":"package main"}}`
+	reader2 := bytes.NewBufferString(toolUseOutput)
+	err = ProcessEventWithEvent(reader2, cfg, "claude", "PostToolUse")
+	if err != nil {
+		t.Fatalf("PostToolUse with tool_input and tool_output should not error, got: %v", err)
+	}
+
+	preToolInput := `{"session_id":"sess-456","tool_name":"Write","tool_input":{"file_path":"/tmp/out.go","content":"package main\nfunc main() {}"}}`
+	reader3 := bytes.NewBufferString(preToolInput)
+	err = ProcessEventWithEvent(reader3, cfg, "claude", "PreToolUse")
+	if err != nil {
+		t.Fatalf("PreToolUse with tool_input should not error, got: %v", err)
+	}
+}
+
 func TestRunHookHandlerWithTool_RequiresConfig(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Server.Enabled = false
