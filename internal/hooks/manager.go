@@ -125,12 +125,10 @@ func getGeminiCLIDir(home string) (string, error) {
 }
 
 func getCopilotHooksDir(home string) (string, error) {
-	switch runtime.GOOS {
-	case "windows":
-		return filepath.Join(os.Getenv("APPDATA"), "GitHub Copilot", "hooks"), nil
-	default:
-		return filepath.Join(home, ".config", "github-copilot", "hooks"), nil
-	}
+	// Copilot CLI v1.0+ loads hooks from .github/hooks/ in the current repo.
+	// For global installation, we use ~/.copilot/hooks/ as the user-level path
+	// and also install to the legacy ~/.config/github-copilot/hooks/ for older versions.
+	return filepath.Join(home, ".copilot", "hooks"), nil
 }
 
 func getWindsurfHooksDir(home string) (string, error) {
@@ -516,7 +514,34 @@ func uninstallClaudeCode() error {
 }
 
 func installGeminiCLI(handlerPath string) error {
-	return installSettingsHookFile(ToolGeminiCLI, handlerPath, generateGeminiHooks, []string{"name", "command"}, nil)
+	if err := installSettingsHookFile(ToolGeminiCLI, handlerPath, generateGeminiHooks, []string{"name", "command"}, nil); err != nil {
+		return err
+	}
+	// Gemini CLI requires hooksConfig.enabled to be set for hooks to fire.
+	dir, err := GetHooksDir(ToolGeminiCLI)
+	if err != nil {
+		return err
+	}
+	settingsFile := filepath.Join(dir, "settings.json")
+	data, err := os.ReadFile(settingsFile)
+	if err != nil {
+		return err
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return err
+	}
+	hooksConfig, _ := settings["hooksConfig"].(map[string]any)
+	if hooksConfig == nil {
+		hooksConfig = make(map[string]any)
+	}
+	hooksConfig["enabled"] = true
+	settings["hooksConfig"] = hooksConfig
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(settingsFile, out, 0600)
 }
 
 func uninstallGeminiCLI() error {
@@ -539,7 +564,16 @@ func uninstallWindsurf() error {
 	return uninstallJSONHookFile(ToolWindsurf, nil, []string{"command", "bash"})
 }
 
+// geminiToolEvents are events where the matcher is a regex matched against tool names.
+var geminiToolEvents = map[string]bool{
+	"BeforeTool": true,
+	"AfterTool":  true,
+}
+
 // generateGeminiHooks creates the Gemini CLI hooks configuration.
+// Gemini CLI uses two matcher modes:
+//   - Tool events (BeforeTool, AfterTool): matcher is a regex against tool names → ".*"
+//   - All other events: matcher is an exact string or "*" wildcard → "*"
 func generateGeminiHooks(handlerPath string) (map[string]any, error) {
 	if err := validateHandlerPath(handlerPath); err != nil {
 		return nil, err
@@ -555,9 +589,13 @@ func generateGeminiHooks(handlerPath string) (map[string]any, error) {
 	}
 	hooks := make(map[string]any)
 	for _, event := range geminiEvents {
+		matcher := "*"
+		if geminiToolEvents[event] {
+			matcher = ".*"
+		}
 		hooks[event] = []map[string]any{
 			{
-				"matcher": ".*",
+				"matcher": matcher,
 				"hooks": []map[string]any{
 					{
 						"name":    "intentra-" + event,
