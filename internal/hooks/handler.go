@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/intentrahq/intentra-cli/internal/api"
@@ -36,6 +37,20 @@ const (
 )
 
 const cleanupMarkerFile = "intentra_cleanup_marker"
+
+const gitMetadataTTL = 5 * time.Minute
+
+type gitMetadataEntry struct {
+	repoName    string
+	repoURLHash string
+	branchName  string
+	cachedAt    time.Time
+}
+
+var (
+	gitMetadataCache = make(map[string]gitMetadataEntry)
+	gitMetadataMu    sync.Mutex
+)
 
 type bufferedEvent struct {
 	Event    *models.Event  `json:"event"`
@@ -173,6 +188,18 @@ func cleanupStaleBuffers() {
 }
 
 func collectGitMetadata() (repoName, repoURLHash, branchName string) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = ""
+	}
+
+	gitMetadataMu.Lock()
+	if entry, ok := gitMetadataCache[cwd]; ok && time.Since(entry.cachedAt) < gitMetadataTTL {
+		gitMetadataMu.Unlock()
+		return entry.repoName, entry.repoURLHash, entry.branchName
+	}
+	gitMetadataMu.Unlock()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
@@ -198,6 +225,15 @@ func collectGitMetadata() (repoName, repoURLHash, branchName string) {
 		branchName = strings.TrimSpace(string(out))
 	}
 
+	gitMetadataMu.Lock()
+	gitMetadataCache[cwd] = gitMetadataEntry{
+		repoName:    repoName,
+		repoURLHash: repoURLHash,
+		branchName:  branchName,
+		cachedAt:    time.Now(),
+	}
+	gitMetadataMu.Unlock()
+
 	return
 }
 
@@ -216,7 +252,7 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 
 	model := scan.Model
 	if model == "" {
-		if tool == "copilot" {
+		if tool == string(ToolCopilot) {
 			model = "gpt-4o"
 		} else {
 			model = "claude-sonnet-4.5"
@@ -277,7 +313,7 @@ func aggregateEventMetrics(events []bufferedEvent, scan *models.Scan) {
 		ev := entry.Event
 		normalizedType := NormalizedEventType(ev.NormalizedType)
 
-		if normalizedType == EventPreCompact {
+		if normalizedType == models.EventPreCompact {
 			preCompactCount++
 			if preCompactCount > maxPreCompactEvents {
 				continue
@@ -336,7 +372,7 @@ func extractSessionEndMetadata(scan *models.Scan, tool string, events []buffered
 	}
 	for i := len(events) - 1; i >= 0; i-- {
 		entry := events[i]
-		if NormalizedEventType(entry.Event.NormalizedType) == EventSessionEnd && entry.RawEvent != nil {
+		if NormalizedEventType(entry.Event.NormalizedType) == models.EventSessionEnd && entry.RawEvent != nil {
 			if reason, ok := entry.RawEvent["reason"].(string); ok && reason != "" {
 				scan.SessionEndReason = reason
 			}
@@ -417,7 +453,7 @@ func aggregateMCPToolUsage(events []bufferedEvent, totalScanCost float64) []mode
 func normalizeHookEvent(rawJSON []byte, tool, eventType string) (*models.Event, map[string]any, NormalizedEventType, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(rawJSON, &raw); err != nil {
-		return nil, nil, EventUnknown, fmt.Errorf("failed to parse raw JSON: %w", err)
+		return nil, nil, models.EventUnknown, fmt.Errorf("failed to parse raw JSON: %w", err)
 	}
 
 	normalizer := GetNormalizer(tool)
@@ -635,7 +671,7 @@ func sanitizeEvent(event *models.Event) {
 // extractCompactionMetadata populates compaction-specific fields for pre_compact events.
 // Cursor provides rich context window metrics; Claude Code and Gemini CLI provide only trigger type.
 func extractCompactionMetadata(event *models.Event, raw map[string]any, normalizedType NormalizedEventType) {
-	if normalizedType != EventPreCompact {
+	if normalizedType != models.EventPreCompact {
 		return
 	}
 
@@ -673,7 +709,7 @@ func extractCompactionMetadata(event *models.Event, raw map[string]any, normaliz
 // extractMCPMetadata populates MCP-specific fields on the event based on the tool type.
 // Each AI coding tool exposes MCP data in a different format.
 func extractMCPMetadata(event *models.Event, raw map[string]any, tool string, normalizedType NormalizedEventType) {
-	isMCPHook := normalizedType == EventBeforeMCP || normalizedType == EventAfterMCP
+	isMCPHook := normalizedType == models.EventBeforeMCP || normalizedType == models.EventAfterMCP
 	isMCPToolUse := strings.HasPrefix(event.ToolName, "MCP:") || strings.HasPrefix(event.ToolName, "mcp__")
 
 	if !isMCPHook && !isMCPToolUse {
@@ -694,13 +730,13 @@ func extractMCPMetadata(event *models.Event, raw map[string]any, tool string, no
 	}
 
 	switch tool {
-	case "cursor":
+	case string(ToolCursor):
 		extractCursorMCP(event, raw)
-	case "windsurf":
+	case string(ToolWindsurf):
 		extractWindsurfMCP(event, raw)
-	case "claude", "gemini":
+	case string(ToolClaudeCode), string(ToolGeminiCLI):
 		extractClaudeGeminiMCP(event, raw)
-	case "copilot":
+	case string(ToolCopilot):
 		extractCopilotMCP(event, raw)
 	default:
 		if event.ToolName != "" {
@@ -942,8 +978,8 @@ func deriveSessionKey(event *models.Event, tool string) (string, string) {
 	}
 	sessionKey := tool + "_" + baseKey
 
-	if tool == "claude" {
-		cursorKey := "cursor_" + baseKey
+	if tool == string(ToolClaudeCode) {
+		cursorKey := string(ToolCursor) + "_" + baseKey
 		cursorBufferPath := getBufferPath(cursorKey)
 		if info, err := os.Stat(cursorBufferPath); err == nil {
 			if time.Since(info.ModTime()) < 30*time.Minute {

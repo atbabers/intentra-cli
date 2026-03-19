@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.1] - 2026-03-16
+
+### Changed
+- Replaced all event type constant aliases in `normalizer.go` with direct `models.*` references, removing 40+ redundant re-exports
+- Replaced hardcoded tool name strings (`"cursor"`, `"claude"`, etc.) with typed `Tool*` constants throughout `handler.go` and `normalizer.go`
+- Added git metadata caching with 5-minute TTL to avoid repeated `git` subprocess calls per working directory
+
 ## [0.16.0] - 2026-03-16
 
 ### Added
@@ -508,6 +515,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.16.1]: https://github.com/intentrahq/intentra-cli/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/intentrahq/intentra-cli/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/intentrahq/intentra-cli/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/intentrahq/intentra-cli/compare/v0.14.1...v0.15.0

@@ -1,63 +1,12 @@
 // Package hooks provides event normalization across AI coding tools.
-// This file defines the normalizer interface. Event type constants are defined
-// in pkg/models/event.go; aliases are provided here for package-level convenience.
+// Event type constants are defined in pkg/models/event.go and referenced
+// directly via the models package.
 package hooks
 
 import "github.com/intentrahq/intentra-cli/pkg/models"
 
 // NormalizedEventType is an alias for models.NormalizedEventType.
 type NormalizedEventType = models.NormalizedEventType
-
-const (
-	EventSessionStart = models.EventSessionStart
-	EventSessionEnd   = models.EventSessionEnd
-
-	EventBeforePrompt  = models.EventBeforePrompt
-	EventAfterResponse = models.EventAfterResponse
-	EventAgentThought  = models.EventAgentThought
-
-	EventBeforeTool = models.EventBeforeTool
-	EventAfterTool  = models.EventAfterTool
-
-	EventBeforeFileRead = models.EventBeforeFileRead
-	EventAfterFileRead  = models.EventAfterFileRead
-	EventBeforeFileEdit = models.EventBeforeFileEdit
-	EventAfterFileEdit  = models.EventAfterFileEdit
-
-	EventBeforeShell = models.EventBeforeShell
-	EventAfterShell  = models.EventAfterShell
-
-	EventBeforeMCP = models.EventBeforeMCP
-	EventAfterMCP  = models.EventAfterMCP
-
-	EventBeforeModel = models.EventBeforeModel
-	EventAfterModel  = models.EventAfterModel
-
-	EventToolSelection     = models.EventToolSelection
-	EventPermissionRequest = models.EventPermissionRequest
-	EventNotification      = models.EventNotification
-	EventStop              = models.EventStop
-	EventSubagentStart     = models.EventSubagentStart
-	EventSubagentStop      = models.EventSubagentStop
-	EventPreCompact        = models.EventPreCompact
-	EventError             = models.EventError
-	EventToolUseFailure    = models.EventToolUseFailure
-	EventWorktreeSetup     = models.EventWorktreeSetup
-	EventUnknown           = models.EventUnknown
-
-	EventPostCompact            = models.EventPostCompact
-	EventTeammateIdle           = models.EventTeammateIdle
-	EventTaskCompleted          = models.EventTaskCompleted
-	EventInstructionsLoaded     = models.EventInstructionsLoaded
-	EventConfigChange           = models.EventConfigChange
-	EventWorktreeCreate         = models.EventWorktreeCreate
-	EventWorktreeRemove         = models.EventWorktreeRemove
-	EventElicitation            = models.EventElicitation
-	EventElicitationResult      = models.EventElicitationResult
-	EventBeforeToolSelection    = models.EventBeforeToolSelection
-	EventPreCompress            = models.EventPreCompress
-	EventResponseWithTranscript = models.EventResponseWithTranscript
-)
 
 // Normalizer defines the interface for tool-specific event normalizers.
 type Normalizer interface {
@@ -99,7 +48,7 @@ func (n *tableNormalizer) NormalizeEventType(native string) NormalizedEventType 
 	if normalized, ok := n.mapping[native]; ok {
 		return normalized
 	}
-	return EventUnknown
+	return models.EventUnknown
 }
 
 // GenericNormalizer handles unknown tools by returning EventUnknown.
@@ -110,93 +59,93 @@ func (n *GenericNormalizer) Tool() string { return "" }
 
 // NormalizeEventType returns EventUnknown for unrecognized events.
 func (n *GenericNormalizer) NormalizeEventType(native string) NormalizedEventType {
-	return EventUnknown
+	return models.EventUnknown
 }
 
 // toolMappings defines the event type mappings for all supported AI coding tools.
 // Each tool maps its native event names to unified NormalizedEventType constants.
 var toolMappings = map[string]map[string]NormalizedEventType{
-	"cursor": {
-		"sessionStart":         EventSessionStart,
-		"sessionEnd":           EventSessionEnd,
-		"beforeSubmitPrompt":   EventBeforePrompt,
-		"afterAgentResponse":   EventAfterResponse,
-		"afterAgentThought":    EventAgentThought,
-		"beforeShellExecution": EventBeforeShell,
-		"afterShellExecution":  EventAfterShell,
-		"beforeMCPExecution":   EventBeforeMCP,
-		"afterMCPExecution":    EventAfterMCP,
-		"beforeTabFileRead":    EventBeforeFileRead,
-		"beforeReadFile":       EventBeforeFileRead,
-		"afterFileEdit":        EventAfterFileEdit,
-		"afterTabFileEdit":     EventAfterFileEdit,
-		"preToolUse":           EventBeforeTool,
-		"postToolUse":          EventAfterTool,
-		"postToolUseFailure":   EventToolUseFailure,
-		"preCompact":           EventPreCompact,
-		"subagentStart":        EventSubagentStart,
-		"subagentStop":         EventSubagentStop,
-		"stop":                 EventStop,
+	string(ToolCursor): {
+		"sessionStart":         models.EventSessionStart,
+		"sessionEnd":           models.EventSessionEnd,
+		"beforeSubmitPrompt":   models.EventBeforePrompt,
+		"afterAgentResponse":   models.EventAfterResponse,
+		"afterAgentThought":    models.EventAgentThought,
+		"beforeShellExecution": models.EventBeforeShell,
+		"afterShellExecution":  models.EventAfterShell,
+		"beforeMCPExecution":   models.EventBeforeMCP,
+		"afterMCPExecution":    models.EventAfterMCP,
+		"beforeTabFileRead":    models.EventBeforeFileRead,
+		"beforeReadFile":       models.EventBeforeFileRead,
+		"afterFileEdit":        models.EventAfterFileEdit,
+		"afterTabFileEdit":     models.EventAfterFileEdit,
+		"preToolUse":           models.EventBeforeTool,
+		"postToolUse":          models.EventAfterTool,
+		"postToolUseFailure":   models.EventToolUseFailure,
+		"preCompact":           models.EventPreCompact,
+		"subagentStart":        models.EventSubagentStart,
+		"subagentStop":         models.EventSubagentStop,
+		"stop":                 models.EventStop,
 	},
-	"claude": {
-		"SessionStart":        EventSessionStart,
-		"SessionEnd":          EventSessionEnd,
-		"UserPromptSubmit":    EventBeforePrompt,
-		"PreToolUse":          EventBeforeTool,
-		"PostToolUse":         EventAfterTool,
-		"PostToolUseFailure":  EventToolUseFailure,
-		"PermissionRequest":   EventPermissionRequest,
-		"Notification":        EventNotification,
-		"Stop":                EventStop,
-		"SubagentStart":       EventSubagentStart,
-		"SubagentStop":        EventSubagentStop,
-		"PreCompact":          EventPreCompact,
-		"PostCompact":         EventPostCompact,
-		"TeammateIdle":        EventTeammateIdle,
-		"TaskCompleted":       EventTaskCompleted,
-		"InstructionsLoaded":  EventInstructionsLoaded,
-		"ConfigChange":        EventConfigChange,
-		"WorktreeCreate":      EventWorktreeCreate,
-		"WorktreeRemove":      EventWorktreeRemove,
-		"Elicitation":         EventElicitation,
-		"ElicitationResult":   EventElicitationResult,
+	string(ToolClaudeCode): {
+		"SessionStart":        models.EventSessionStart,
+		"SessionEnd":          models.EventSessionEnd,
+		"UserPromptSubmit":    models.EventBeforePrompt,
+		"PreToolUse":          models.EventBeforeTool,
+		"PostToolUse":         models.EventAfterTool,
+		"PostToolUseFailure":  models.EventToolUseFailure,
+		"PermissionRequest":   models.EventPermissionRequest,
+		"Notification":        models.EventNotification,
+		"Stop":                models.EventStop,
+		"SubagentStart":       models.EventSubagentStart,
+		"SubagentStop":        models.EventSubagentStop,
+		"PreCompact":          models.EventPreCompact,
+		"PostCompact":         models.EventPostCompact,
+		"TeammateIdle":        models.EventTeammateIdle,
+		"TaskCompleted":       models.EventTaskCompleted,
+		"InstructionsLoaded":  models.EventInstructionsLoaded,
+		"ConfigChange":        models.EventConfigChange,
+		"WorktreeCreate":      models.EventWorktreeCreate,
+		"WorktreeRemove":      models.EventWorktreeRemove,
+		"Elicitation":         models.EventElicitation,
+		"ElicitationResult":   models.EventElicitationResult,
 	},
-	"copilot": {
-		"sessionStart":        EventSessionStart,
-		"sessionEnd":          EventSessionEnd,
-		"userPromptSubmitted": EventBeforePrompt,
-		"preToolUse":          EventBeforeTool,
-		"postToolUse":         EventAfterTool,
-		"agentStop":           EventStop,
-		"subagentStop":        EventSubagentStop,
-		"errorOccurred":       EventError,
+	string(ToolCopilot): {
+		"sessionStart":        models.EventSessionStart,
+		"sessionEnd":          models.EventSessionEnd,
+		"userPromptSubmitted": models.EventBeforePrompt,
+		"preToolUse":          models.EventBeforeTool,
+		"postToolUse":         models.EventAfterTool,
+		"agentStop":           models.EventStop,
+		"subagentStop":        models.EventSubagentStop,
+		"errorOccurred":       models.EventError,
 	},
-	"windsurf": {
-		"pre_user_prompt":                     EventBeforePrompt,
-		"post_cascade_response":               EventAfterResponse,
-		"post_cascade_response_with_transcript": EventResponseWithTranscript,
-		"pre_read_code":                       EventBeforeFileRead,
-		"post_read_code":                      EventAfterFileRead,
-		"pre_write_code":                      EventBeforeFileEdit,
-		"post_write_code":                     EventAfterFileEdit,
-		"pre_run_command":                     EventBeforeShell,
-		"post_run_command":                    EventAfterShell,
-		"pre_mcp_tool_use":                    EventBeforeMCP,
-		"post_mcp_tool_use":                   EventAfterMCP,
-		"post_setup_worktree":                 EventWorktreeSetup,
+	string(ToolWindsurf): {
+		"pre_user_prompt":                        models.EventBeforePrompt,
+		"post_cascade_response":                  models.EventAfterResponse,
+		"post_cascade_response_with_transcript":  models.EventResponseWithTranscript,
+		"pre_read_code":                          models.EventBeforeFileRead,
+		"post_read_code":                         models.EventAfterFileRead,
+		"pre_write_code":                         models.EventBeforeFileEdit,
+		"post_write_code":                        models.EventAfterFileEdit,
+		"pre_run_command":                        models.EventBeforeShell,
+		"post_run_command":                       models.EventAfterShell,
+		"pre_mcp_tool_use":                       models.EventBeforeMCP,
+		"post_mcp_tool_use":                      models.EventAfterMCP,
+		"post_setup_worktree":                    models.EventWorktreeSetup,
 	},
-	"gemini": {
-		"SessionStart":        EventSessionStart,
-		"SessionEnd":          EventSessionEnd,
-		"BeforeAgent":         EventBeforePrompt,
-		"AfterAgent":          EventAfterResponse,
-		"BeforeModel":         EventBeforeModel,
-		"AfterModel":          EventAfterModel,
-		"BeforeToolSelection": EventBeforeToolSelection,
-		"BeforeTool":          EventBeforeTool,
-		"AfterTool":           EventAfterTool,
-		"PreCompress":         EventPreCompress,
-		"Notification":        EventNotification,
+	string(ToolGeminiCLI): {
+		"SessionStart":        models.EventSessionStart,
+		"SessionEnd":          models.EventSessionEnd,
+		"BeforeAgent":         models.EventBeforePrompt,
+		"AfterAgent":          models.EventAfterResponse,
+		"BeforeModel":         models.EventBeforeModel,
+		"AfterModel":          models.EventAfterModel,
+		"BeforeToolSelection": models.EventBeforeToolSelection,
+		"BeforeTool":          models.EventBeforeTool,
+		"AfterTool":           models.EventAfterTool,
+		"PreCompress":         models.EventPreCompress,
+		"Notification":        models.EventNotification,
 	},
 }
 
@@ -215,22 +164,22 @@ func init() {
 // Windsurf sessions that end without a final response will not generate a scan.
 func IsStopEvent(eventType NormalizedEventType, tool string) bool {
 	switch tool {
-	case "windsurf":
-		return eventType == EventAfterResponse
-	case "copilot", "gemini":
-		return eventType == EventSessionEnd
+	case string(ToolWindsurf):
+		return eventType == models.EventAfterResponse
+	case string(ToolCopilot), string(ToolGeminiCLI):
+		return eventType == models.EventSessionEnd
 	default:
-		return eventType == EventStop
+		return eventType == models.EventStop
 	}
 }
 
 // IsSessionEndEvent returns true if this event carries session-end metadata
 // that should be PATCHed onto the last scan (not trigger a new scan).
 func IsSessionEndEvent(eventType NormalizedEventType, tool string) bool {
-	if tool == "windsurf" || tool == "copilot" {
+	if tool == string(ToolWindsurf) || tool == string(ToolCopilot) {
 		return false
 	}
-	return eventType == EventSessionEnd
+	return eventType == models.EventSessionEnd
 }
 
 // IsLLMCallEvent delegates to models.IsLLMCallEvent.
