@@ -38,20 +38,6 @@ const (
 
 const cleanupMarkerFile = "intentra_cleanup_marker"
 
-const gitMetadataTTL = 5 * time.Minute
-
-type gitMetadataEntry struct {
-	repoName    string
-	repoURLHash string
-	branchName  string
-	cachedAt    time.Time
-}
-
-var (
-	gitMetadataCache = make(map[string]gitMetadataEntry)
-	gitMetadataMu    sync.Mutex
-)
-
 type bufferedEvent struct {
 	Event    *models.Event  `json:"event"`
 	RawEvent map[string]any `json:"raw_event"`
@@ -63,21 +49,24 @@ func getBufferPath(sessionKey string) string {
 	return filepath.Join(os.TempDir(), filename)
 }
 
-func getLastScanPath(sessionKey string) string {
+// GetLastScanPath returns the path to the file storing the last scan ID for a session.
+func GetLastScanPath(sessionKey string) string {
 	hash := sha256.Sum256([]byte(sessionKey))
 	filename := "intentra_lastscan_" + hex.EncodeToString(hash[:8]) + ".txt"
 	return filepath.Join(os.TempDir(), filename)
 }
 
-func saveLastScanID(sessionKey, scanID string) {
-	path := getLastScanPath(sessionKey)
+// SaveLastScanID persists the scan ID for the given session key.
+func SaveLastScanID(sessionKey, scanID string) {
+	path := GetLastScanPath(sessionKey)
 	if err := os.WriteFile(path, []byte(scanID), 0600); err != nil {
 		debug.Log("failed to write scan ID file: %v", err)
 	}
 }
 
-func getLastScanID(sessionKey string) string {
-	path := getLastScanPath(sessionKey)
+// GetLastScanID retrieves the last persisted scan ID for the given session key.
+func GetLastScanID(sessionKey string) string {
+	path := GetLastScanPath(sessionKey)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
@@ -85,8 +74,9 @@ func getLastScanID(sessionKey string) string {
 	return strings.TrimSpace(string(data))
 }
 
-func clearLastScanID(sessionKey string) {
-	path := getLastScanPath(sessionKey)
+// ClearLastScanID removes the persisted scan ID file for the given session key.
+func ClearLastScanID(sessionKey string) {
+	path := GetLastScanPath(sessionKey)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		debug.Log("failed to remove scan ID file: %v", err)
 	}
@@ -101,12 +91,7 @@ func appendToBuffer(sessionKey string, event *models.Event, rawEvent map[string]
 	defer f.Close()
 
 	entry := bufferedEvent{Event: event, RawEvent: rawEvent}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return fmt.Errorf("failed to marshal event: %w", err)
-	}
-
-	if _, err := f.Write(append(data, '\n')); err != nil {
+	if err := json.NewEncoder(f).Encode(entry); err != nil {
 		return fmt.Errorf("failed to write to buffer: %w", err)
 	}
 
@@ -167,6 +152,7 @@ func cleanupStaleBuffers() {
 	patterns := []string{
 		filepath.Join(os.TempDir(), "intentra_buffer_*.jsonl"),
 		filepath.Join(os.TempDir(), "intentra_lastscan_*.txt"),
+		filepath.Join(os.TempDir(), "intentra_send_*.json"),
 	}
 
 	cutoff := time.Now().Add(-maxBufferAge)
@@ -187,52 +173,56 @@ func cleanupStaleBuffers() {
 	}
 }
 
-func collectGitMetadata() (repoName, repoURLHash, branchName string) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = ""
-	}
-
-	gitMetadataMu.Lock()
-	if entry, ok := gitMetadataCache[cwd]; ok && time.Since(entry.cachedAt) < gitMetadataTTL {
-		gitMetadataMu.Unlock()
-		return entry.repoName, entry.repoURLHash, entry.branchName
-	}
-	gitMetadataMu.Unlock()
-
+func collectGitMetadata() (repoName, repoURLHash, branchName, commitSHA string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	if out, err := exec.CommandContext(ctx, "git", "remote", "get-url", "origin").Output(); err == nil {
-		remoteURL := strings.TrimSpace(string(out))
-		if remoteURL != "" {
-			hash := sha256.Sum256([]byte(remoteURL))
-			repoURLHash = hex.EncodeToString(hash[:])
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 
-			name := remoteURL
-			if idx := strings.LastIndex(name, "/"); idx >= 0 {
-				name = name[idx+1:]
+	wg.Add(3)
+
+	go func() {
+		defer wg.Done()
+		if out, err := exec.CommandContext(ctx, "git", "remote", "get-url", "origin").Output(); err == nil {
+			remoteURL := strings.TrimSpace(string(out))
+			if remoteURL != "" {
+				hash := sha256.Sum256([]byte(remoteURL))
+				name := remoteURL
+				if idx := strings.LastIndex(name, "/"); idx >= 0 {
+					name = name[idx+1:]
+				}
+				if idx := strings.LastIndex(name, ":"); idx >= 0 {
+					name = name[idx+1:]
+				}
+				name = strings.TrimSuffix(name, ".git")
+				mu.Lock()
+				repoURLHash = hex.EncodeToString(hash[:])
+				repoName = name
+				mu.Unlock()
 			}
-			if idx := strings.LastIndex(name, ":"); idx >= 0 {
-				name = name[idx+1:]
-			}
-			name = strings.TrimSuffix(name, ".git")
-			repoName = name
 		}
-	}
+	}()
 
-	if out, err := exec.CommandContext(ctx, "git", "branch", "--show-current").Output(); err == nil {
-		branchName = strings.TrimSpace(string(out))
-	}
+	go func() {
+		defer wg.Done()
+		if out, err := exec.CommandContext(ctx, "git", "branch", "--show-current").Output(); err == nil {
+			mu.Lock()
+			branchName = strings.TrimSpace(string(out))
+			mu.Unlock()
+		}
+	}()
 
-	gitMetadataMu.Lock()
-	gitMetadataCache[cwd] = gitMetadataEntry{
-		repoName:    repoName,
-		repoURLHash: repoURLHash,
-		branchName:  branchName,
-		cachedAt:    time.Now(),
-	}
-	gitMetadataMu.Unlock()
+	go func() {
+		defer wg.Done()
+		if out, err := exec.CommandContext(ctx, "git", "rev-parse", "HEAD").Output(); err == nil {
+			mu.Lock()
+			commitSHA = strings.TrimSpace(string(out))
+			mu.Unlock()
+		}
+	}()
+
+	wg.Wait()
 
 	return
 }
@@ -247,7 +237,7 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 	scan := initScan(events, tool)
 	aggregateEventMetrics(events, scan)
 
-	scan.Model = detectFirstString(events, func(e *models.Event) string { return e.Model })
+	scan.Model = normalizeModelID(detectFirstString(events, func(e *models.Event) string { return e.Model }), tool)
 	scan.GenerationID = detectFirstString(events, func(e *models.Event) string { return e.GenerationID })
 
 	model := scan.Model
@@ -262,10 +252,11 @@ func createAggregatedScan(events []bufferedEvent, tool string) *models.Scan {
 
 	scan.MCPToolUsage = aggregateMCPToolUsage(events, scan.EstimatedCost)
 
-	repoName, repoURLHash, branchName := collectGitMetadata()
+	repoName, repoURLHash, branchName, commitSHA := collectGitMetadata()
 	scan.RepoName = repoName
 	scan.RepoURLHash = repoURLHash
 	scan.BranchName = branchName
+	scan.CommitSHA = commitSHA
 
 	var allEvents []models.Event
 	for _, entry := range events {
@@ -333,10 +324,10 @@ func aggregateEventMetrics(events []bufferedEvent, scan *models.Scan) {
 		scan.OutputTokens += ev.OutputTokens
 		scan.ThinkingTokens += ev.ThinkingTokens
 
-		if IsLLMCallEvent(normalizedType) {
+		if models.IsLLMCallEvent(normalizedType) {
 			scan.LLMCalls++
 		}
-		if IsToolCallEvent(normalizedType) {
+		if models.IsToolCallEvent(normalizedType) {
 			scan.ToolCalls++
 		}
 	}
@@ -1016,6 +1007,39 @@ func handleStopEvent(sessionKey, tool string, event *models.Event, rawMap map[st
 		return nil
 	}
 
+	// Save scan locally if debug mode (fast local I/O, no network)
+	if debug.Enabled {
+		if err := scanner.SaveScan(scan); err != nil {
+			debug.Warn("failed to save scan locally: %v", err)
+		} else {
+			debug.Log("Saved scan locally: %s", scan.ID)
+		}
+	}
+
+	// Write payload and spawn detached child for network I/O
+	payloadPath, err := writeSendPayload("send_scan", scan, scan.ID, sessionKey, "", 0)
+	if err != nil {
+		// Fallback: queue offline if we can't write the payload
+		debug.Warn("failed to write send payload: %v", err)
+		if qErr := queue.Enqueue(scan); qErr != nil {
+			debug.Warn("failed to queue scan offline: %v", qErr)
+		}
+		return nil
+	}
+
+	if err := spawnDetachedSend(payloadPath); err != nil {
+		// Fallback: inline send if spawn fails
+		debug.Warn("failed to spawn deferred send, falling back to inline: %v", err)
+		os.Remove(payloadPath)
+		return handleStopEventInline(scan, sessionKey, cfg)
+	}
+
+	return nil
+}
+
+// handleStopEventInline is the legacy inline send path, used as fallback
+// when the detached process cannot be spawned.
+func handleStopEventInline(scan *models.Scan, sessionKey string, cfg *config.Config) error {
 	synced := false
 
 	creds, credErr := auth.GetValidCredentials()
@@ -1034,7 +1058,6 @@ func handleStopEvent(sessionKey, tool string, event *models.Event, rawMap map[st
 	if !synced && cfg.Server.Enabled {
 		client, err := api.NewClient(cfg)
 		if err == nil {
-			debug.Log("Syncing to %s (config auth)", cfg.Server.Endpoint)
 			if err := client.SendScan(scan); err != nil {
 				debug.Warn("sync failed: %v", err)
 			} else {
@@ -1050,19 +1073,9 @@ func handleStopEvent(sessionKey, tool string, event *models.Event, rawMap map[st
 	}
 
 	if synced && scan.ID != "" {
-		saveLastScanID(sessionKey, scan.ID)
-		// Opportunistically flush any previously queued scans in background
-		// to avoid blocking the hook handler hot path
+		SaveLastScanID(sessionKey, scan.ID)
 		if creds != nil {
 			go queue.FlushWithJWT(creds.AccessToken)
-		}
-	}
-
-	if debug.Enabled {
-		if err := scanner.SaveScan(scan); err != nil {
-			debug.Warn("failed to save scan locally: %v", err)
-		} else {
-			debug.Log("Saved scan locally: %s", scan.ID)
 		}
 	}
 
@@ -1070,18 +1083,9 @@ func handleStopEvent(sessionKey, tool string, event *models.Event, rawMap map[st
 }
 
 func handleSessionEndEvent(sessionKey string, rawMap map[string]any) error {
-	lastScanID := getLastScanID(sessionKey)
+	lastScanID := GetLastScanID(sessionKey)
 	if lastScanID == "" {
 		debug.Log("sessionEnd event but no lastScanID for session %s, ignoring", sessionKey)
-		return nil
-	}
-
-	creds, err := auth.GetValidCredentials()
-	if err != nil {
-		debug.Warn("credential check failed: %v", err)
-	}
-	if creds == nil {
-		debug.Log("sessionEnd event but no valid credentials, ignoring")
 		return nil
 	}
 
@@ -1094,13 +1098,21 @@ func handleSessionEndEvent(sessionKey string, rawMap map[string]any) error {
 		durationMs = extractInt64(rawMap, "duration_ms")
 	}
 
-	if err := api.PatchSessionEnd(lastScanID, creds.AccessToken, reason, durationMs); err != nil {
-		debug.Warn("failed to PATCH session end: %v", err)
-	} else {
-		debug.Log("PATCHed session end for scan %s", lastScanID)
+	// Clear scan ID now (before spawning) since we've captured it
+	ClearLastScanID(sessionKey)
+
+	// Write payload and spawn detached child for the PATCH call
+	payloadPath, err := writeSendPayload("patch_session_end", nil, lastScanID, sessionKey, reason, durationMs)
+	if err != nil {
+		debug.Warn("failed to write session end payload: %v", err)
+		return nil
 	}
 
-	clearLastScanID(sessionKey)
+	if err := spawnDetachedSend(payloadPath); err != nil {
+		debug.Warn("failed to spawn deferred session end, ignoring: %v", err)
+		os.Remove(payloadPath)
+	}
+
 	return nil
 }
 
@@ -1114,5 +1126,67 @@ func RunHookHandlerWithToolAndEvent(tool, event string) error {
 	debug.Enabled = cfg.Debug
 
 	return ProcessEventWithEvent(os.Stdin, cfg, tool, event)
+}
+
+// writeSendPayload marshals a models.SendPayload to a temp file and returns its absolute path.
+// On any error the temp file is removed before returning.
+func writeSendPayload(action string, scan *models.Scan, scanID, sessionKey, reason string, durationMs int64) (string, error) {
+	p := models.SendPayload{
+		Action:     action,
+		Scan:       scan,
+		ScanID:     scanID,
+		SessionKey: sessionKey,
+		Reason:     reason,
+		DurationMs: durationMs,
+	}
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		return "", fmt.Errorf("writeSendPayload: marshal: %w", err)
+	}
+
+	f, err := os.CreateTemp("", "intentra_send_*.json")
+	if err != nil {
+		return "", fmt.Errorf("writeSendPayload: create temp file: %w", err)
+	}
+
+	path := f.Name()
+
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(path)
+		return "", fmt.Errorf("writeSendPayload: write: %w", err)
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("writeSendPayload: close: %w", err)
+	}
+
+	return path, nil
+}
+
+// spawnDetachedSend launches the current executable with the __send subcommand
+// in a detached process so it can outlive the hook handler. It returns as soon
+// as the child process has been started.
+func spawnDetachedSend(payloadPath string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("spawnDetachedSend: resolve executable: %w", err)
+	}
+
+	cmd := exec.Command(exe, "__send", "--payload", payloadPath)
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	cmd.SysProcAttr = detachedProcAttr()
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("spawnDetachedSend: start: %w", err)
+	}
+
+	go cmd.Wait() //nolint:errcheck
+
+	return nil
 }
 

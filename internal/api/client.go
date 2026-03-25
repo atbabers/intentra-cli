@@ -206,19 +206,6 @@ func (c *Client) addAPIKeyAuth(req *http.Request) error {
 	return nil
 }
 
-// addJWTAuth adds JWT Bearer token authentication from stored credentials.
-// Loads credentials internally; use addJWTAuthWithCreds when creds are already loaded.
-func (c *Client) addJWTAuth(req *http.Request) error {
-	creds, err := auth.GetValidCredentials()
-	if err != nil {
-		return fmt.Errorf("credential retrieval failed: %w", err)
-	}
-	if creds == nil {
-		return fmt.Errorf("not authenticated - run 'intentra login' first")
-	}
-	return c.addJWTAuthWithCreds(req, creds)
-}
-
 // addJWTAuthWithCreds adds JWT auth headers using pre-loaded credentials.
 func (c *Client) addJWTAuthWithCreds(req *http.Request, creds *auth.Credentials) error {
 	req.Header.Set("Authorization", "Bearer "+creds.AccessToken)
@@ -328,7 +315,7 @@ func (c *Client) GetScans(days, limit int) (*ScansResponse, error) {
 
 	req.Header.Set("User-Agent", UserAgent)
 
-	if err := c.addJWTAuth(req); err != nil {
+	if err := c.addAuth(req); err != nil {
 		return nil, err
 	}
 
@@ -376,7 +363,7 @@ func (c *Client) GetScan(scanID string) (*ScanDetailResponse, error) {
 
 	req.Header.Set("User-Agent", UserAgent)
 
-	if err := c.addJWTAuth(req); err != nil {
+	if err := c.addAuth(req); err != nil {
 		return nil, err
 	}
 

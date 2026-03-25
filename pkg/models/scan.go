@@ -80,7 +80,19 @@ type Scan struct {
 	RepoName      string           `json:"repo_name,omitempty"`
 	RepoURLHash   string           `json:"repo_url_hash,omitempty"`
 	BranchName    string           `json:"branch_name,omitempty"`
+	CommitSHA     string           `json:"commit_sha,omitempty"`
 	FilesModified []map[string]any `json:"files_modified,omitempty"`
+}
+
+// SendPayload is the JSON envelope written to a temp file by the hook handler
+// and consumed by the __send subcommand.
+type SendPayload struct {
+	Action     string `json:"action"`
+	Scan       *Scan  `json:"scan,omitempty"`
+	ScanID     string `json:"scan_id,omitempty"`
+	SessionKey string `json:"session_key,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	DurationMs int64  `json:"duration_ms,omitempty"`
 }
 
 var (
@@ -158,6 +170,9 @@ func (s *Scan) BuildAPIPayload(deviceID string) map[string]any {
 	}
 	if s.BranchName != "" {
 		body["branch_name"] = s.BranchName
+	}
+	if s.CommitSHA != "" {
+		body["commit_sha"] = s.CommitSHA
 	}
 	if len(s.FilesModified) > 0 {
 		sanitized := make([]map[string]any, len(s.FilesModified))

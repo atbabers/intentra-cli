@@ -238,14 +238,18 @@ func enforceQueueLimits(dir string) error {
 		return nil
 	}
 
-	// Sort by modification time (oldest first) so we evict the oldest scans
+	// Pre-fetch Info() for all entries to avoid repeated syscalls during sort.
+	infos := make([]os.FileInfo, len(scanFiles))
+	for i, e := range scanFiles {
+		infos[i], _ = e.Info()
+	}
+
+	// Sort by modification time (oldest first) so we evict the oldest scans.
 	sort.Slice(scanFiles, func(i, j int) bool {
-		infoI, errI := scanFiles[i].Info()
-		infoJ, errJ := scanFiles[j].Info()
-		if errI != nil || errJ != nil {
+		if infos[i] == nil || infos[j] == nil {
 			return false
 		}
-		return infoI.ModTime().Before(infoJ.ModTime())
+		return infos[i].ModTime().Before(infos[j].ModTime())
 	})
 
 	for i := 0; i < len(scanFiles)-maxQueueSize; i++ {

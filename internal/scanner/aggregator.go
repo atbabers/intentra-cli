@@ -203,6 +203,9 @@ func AggregateFilesModified(events []models.Event) []map[string]any {
 			s.seenBefore = true
 		case models.EventAfterFileEdit:
 			s.editCount++
+			// Edit content (new_string/old_string) is stripped by sanitizeEvent before
+			// events are persisted, so real line counts are unavailable here. Fall back
+			// to the token-based heuristic until edit ranges are captured in Phase 1b.
 			s.linesAdded += ev.OutputTokens / 15
 			if !s.seenBefore {
 				s.isNew = true

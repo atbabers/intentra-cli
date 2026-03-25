@@ -3,7 +3,11 @@
 // directly via the models package.
 package hooks
 
-import "github.com/intentrahq/intentra-cli/pkg/models"
+import (
+	"strings"
+
+	"github.com/intentrahq/intentra-cli/pkg/models"
+)
 
 // NormalizedEventType is an alias for models.NormalizedEventType.
 type NormalizedEventType = models.NormalizedEventType
@@ -155,6 +159,44 @@ func init() {
 	}
 }
 
+// normalizeModelID converts free-text model names to provider/model-name format.
+func normalizeModelID(model string, tool string) string {
+	if model == "" {
+		return ""
+	}
+	// Already has provider prefix
+	if strings.Contains(model, "/") {
+		return model
+	}
+	// Determine provider from model name
+	switch {
+	case strings.HasPrefix(model, "claude") || strings.HasPrefix(model, "anthropic"):
+		return "anthropic/" + model
+	case strings.HasPrefix(model, "gpt") || strings.HasPrefix(model, "o1") || strings.HasPrefix(model, "o3") || strings.HasPrefix(model, "o4"):
+		return "openai/" + model
+	case strings.HasPrefix(model, "gemini"):
+		return "google/" + model
+	case strings.HasPrefix(model, "cursor"):
+		return "cursor/" + model
+	default:
+		// Infer from tool name
+		switch tool {
+		case "cursor":
+			return "cursor/" + model
+		case string(ToolClaudeCode):
+			return "anthropic/" + model
+		case string(ToolCopilot):
+			return "openai/" + model
+		case string(ToolGeminiCLI):
+			return "google/" + model
+		case string(ToolWindsurf):
+			return "codeium/" + model
+		default:
+			return model
+		}
+	}
+}
+
 // IsStopEvent returns true if the event type marks the end of a scan.
 // Each tool has exactly ONE designated terminal event to prevent duplicate scans.
 //
@@ -182,12 +224,3 @@ func IsSessionEndEvent(eventType NormalizedEventType, tool string) bool {
 	return eventType == models.EventSessionEnd
 }
 
-// IsLLMCallEvent delegates to models.IsLLMCallEvent.
-func IsLLMCallEvent(eventType NormalizedEventType) bool {
-	return models.IsLLMCallEvent(eventType)
-}
-
-// IsToolCallEvent delegates to models.IsToolCallEvent.
-func IsToolCallEvent(eventType NormalizedEventType) bool {
-	return models.IsToolCallEvent(eventType)
-}

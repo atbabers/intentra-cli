@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-03-23
+
+### Added
+- Detached process sending: scan submission and session-end PATCH now run in a spawned `__send` child process, so the hook handler returns immediately without blocking on network I/O
+- Hidden `__send` subcommand consumed by the detached child, handling `send_scan` and `patch_session_end` actions with full JWT/config auth fallback and offline queue support
+- Platform-specific process detachment: `setsid` on Unix, `CREATE_NEW_PROCESS_GROUP` on Windows
+- Model ID normalization (`normalizeModelID`): converts free-text model names to `provider/model-name` format (e.g., `claude-sonnet-4` → `anthropic/claude-sonnet-4`), inferring provider from model prefix or tool name
+- Commit SHA tracking: `git rev-parse HEAD` captured alongside repo name, URL hash, and branch in scan metadata
+- `CommitSHA` field on Scan model and `commit_sha` in API payload
+- `SendPayload` struct promoted to `pkg/models` as shared type between hook handler and `__send` subcommand
+- Tests for `writeSendPayload` (both actions) and stale payload cleanup
+
+### Changed
+- `SaveLastScanID`, `GetLastScanID`, `ClearLastScanID`, `GetLastScanPath` exported for cross-package use by the `__send` subcommand
+- `handleStopEvent` refactored: saves scan locally first (debug mode), writes payload to temp file, spawns detached sender; falls back to inline send on spawn failure
+- `handleSessionEndEvent` refactored: delegates to detached process for the PATCH call instead of inline HTTP; credential check moved to `__send`
+- `collectGitMetadata` runs git commands concurrently via goroutines instead of sequentially; in-memory cache removed in favor of parallel execution
+- `GetScans` and `GetScan` now use the unified `addAuth` method, supporting both JWT and API key auth
+- `appendToBuffer` simplified from manual `json.Marshal` + write to `json.NewEncoder`
+- `validateHandlerPath` simplified: removed redundant manual shell metacharacter check already covered by `safePathPattern` regex
+- `enforceQueueLimits` pre-fetches `Info()` for all entries before sorting to avoid repeated syscalls
+- Stale buffer cleanup now also removes `intentra_send_*.json` temp files
+
+### Removed
+- `addJWTAuth` method on API client (callers use unified `addAuth` or `addJWTAuthWithCreds`)
+- `IsLLMCallEvent` and `IsToolCallEvent` wrapper functions from normalizer (use `models.IsLLMCallEvent`/`models.IsToolCallEvent` directly)
+- Git metadata in-memory cache (`gitMetadataCache`, `gitMetadataMu`, `gitMetadataEntry`) replaced by concurrent collection
+
 ## [0.16.1] - 2026-03-16
 
 ### Changed
@@ -515,6 +543,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local storage with optional server sync
 - HMAC authentication for server sync
 
+[0.17.0]: https://github.com/intentrahq/intentra-cli/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/intentrahq/intentra-cli/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/intentrahq/intentra-cli/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/intentrahq/intentra-cli/compare/v0.15.0...v0.15.1

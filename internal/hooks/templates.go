@@ -24,15 +24,9 @@ func validateHandlerPath(path string) error {
 	if len(path) > 4096 {
 		return errors.New("invalid handler path: exceeds maximum length")
 	}
+	// safePathPattern already prevents all command injection characters.
 	if !safePathPattern.MatchString(path) {
 		return ErrInvalidHandlerPath
-	}
-	// Block common shell metacharacters and injection patterns
-	dangerous := []string{";", "&", "|", "$", "`", "(", ")", "{", "}", "<", ">", "!", "~", "*", "?", "[", "]", "#", "\n", "\r", "'", "\""}
-	for _, d := range dangerous {
-		if strings.Contains(path, d) {
-			return ErrInvalidHandlerPath
-		}
 	}
 	return nil
 }
